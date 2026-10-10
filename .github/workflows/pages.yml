@@ -1,0 +1,46 @@
+# Builds the WASM core and publishes the studio to GitHub Pages.
+# One-time setup: repo Settings > Pages > Build and deployment > Source: GitHub Actions.
+name: Deploy Wick Engine
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+      - name: Build WASM core
+        run: ./build.sh
+      - name: Assemble site
+        run: |
+          mkdir dist
+          cp -r index.html style src wasm dist/
+          touch dist/.nojekyll
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

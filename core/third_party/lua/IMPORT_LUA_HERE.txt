@@ -1,0 +1,2 @@
+Copy the Lua 5.5.1 sources here (see README.md, "Lua 5.5.1 import").
+Delete this file afterwards. build.sh compiles every .c in this folder except lua.c, luac.c, onelua.c and ltests.c.
