@@ -4,8 +4,8 @@
 import { WickCore } from './engine/core.js';
 
 const LIBS = {
-  babylon: 'https://wickngn.github.io/wick-engine/core/third_party/babylon.js',
-  havok: 'https://wickngn.github.io/wick-engine/core/third_party/HavokPhysics_umd.js',
+  babylon: './libs/babylon.js',
+  havok: './libs/HavokPhysics_umd.js',
 };
 
 const root = document.getElementById('wick-root');
