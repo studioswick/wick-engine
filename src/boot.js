@@ -3,9 +3,10 @@
 
 import { WickCore } from './engine/core.js';
 
+// I don't know why local scripts fail to load, so I'm externally referencing for now.
 const LIBS = {
-  babylon: './libs/babylon.js',
-  havok: './libs/HavokPhysics_umd.js',
+  babylon: 'https://cdn.babylonjs.com/babylon.js',
+  havok: 'https://cdn.babylonjs.com/havok/HavokPhysics_umd.js',
 };
 
 const root = document.getElementById('wick-root');
