@@ -2,16 +2,23 @@
 // Owns rendering, the editor camera, selection/gizmos, the sky and sun, and the graphics quality tiers
 // that WickGuard steps through when a device struggles.
 
+import { WickMaterials } from './materials.js';
+import { WickReflections } from './reflections.js';
+
 const B = globalThis.BABYLON;
 
 const DEG = Math.PI / 180;
-const ENV_URL = 'https://assets.babylonjs.com/environments/environmentSpecular.env';
 
+/**
+ * Graphics quality tiers. probes is how many Parts can have their own live reflection (0 turns reflections off),
+ * probeSize and skySize are cube-map face sizes, every is how many frames pass between probe refreshes,
+ * aniso is texture filtering and bump toggles normal maps.
+ */
 export const TIERS = [
-  { name: 'High', dprCap: 2, msaa: 4, bloom: true, fxaa: false, shadows: 2048 },
-  { name: 'Medium', dprCap: 1.5, msaa: 2, bloom: true, fxaa: false, shadows: 1024 },
-  { name: 'Low', dprCap: 1, msaa: 0, bloom: false, fxaa: true, shadows: 1024 },
-  { name: 'Minimal', dprCap: 0.7, msaa: 0, bloom: false, fxaa: false, shadows: 0 },
+  { name: 'High', dprCap: 2, msaa: 4, bloom: true, fxaa: false, shadows: 2048, probes: 5, probeSize: 256, skySize: 256, every: 1, aniso: 8, bump: true },
+  { name: 'Medium', dprCap: 1.5, msaa: 2, bloom: true, fxaa: false, shadows: 1024, probes: 2, probeSize: 128, skySize: 128, every: 2, aniso: 4, bump: true },
+  { name: 'Low', dprCap: 1, msaa: 0, bloom: false, fxaa: true, shadows: 1024, probes: 0, probeSize: 0, skySize: 0, every: 1, aniso: 1, bump: false },
+  { name: 'Minimal', dprCap: 0.7, msaa: 0, bloom: false, fxaa: false, shadows: 0, probes: 0, probeSize: 0, skySize: 0, every: 1, aniso: 1, bump: false },
 ];
 
 // DOM button index (0 left, 1 middle, 2 right) to the names scripts see.
@@ -45,11 +52,11 @@ export class WickWorld {
     this.dm = dm;
     this.tier = 0;
     this.playing = false;
+    this.paused = false; // set by the runtime while a paused game is on screen
     this.tool = 'select';
     this.selected = null;
     this.meshes = new Map(); // instance id -> mesh
     this.lights = new Map(); // instance id -> PointLight
-    this.materials = new Map();
     this.keys = new Set();
     this.shadowGen = null;
     this.pipeline = null;
@@ -72,23 +79,29 @@ export class WickWorld {
     this.gpuName = info.renderer || 'unknown GPU';
     this.softwareRenderer = /swiftshader|llvmpipe|software|basic render/i.test(this.gpuName);
 
+    this.materials = new WickMaterials(this.scene);
+    this.reflections = new WickReflections(this);
+    this.materials.reflections = this.reflections;
+
     this._initLights();
     this._initSky();
     this._initCamera();
     this._initSelection();
-    this._initEnvironment();
     this._bindDataModel();
     this._bindPointer();
     this._applyQuality();
 
     this.engine.onContextLostObservable.add(() => this.onContextLost?.());
     this.scene.onAfterRenderObservable.add(() => this.onFrame?.(this.engine.getDeltaTime()));
-    this.scene.onBeforeRenderObservable.add(() => this._flyCamera());
+    this.scene.onBeforeRenderObservable.add(() => {
+      this._flyCamera();
+      this.reflections.update();
+    });
     new ResizeObserver(() => this.engine.resize()).observe(canvas.parentElement);
     this.engine.runRenderLoop(() => this.scene.render());
   }
 
-  // ---------------------------------------------------------------- lights, sky, environment
+  // ---------------------------------------------------------------- lights and sky
 
   _initLights() {
     this.sun = new B.DirectionalLight('wick-sun', new B.Vector3(-0.4, -1, 0.35), this.scene);
@@ -112,12 +125,6 @@ export class WickWorld {
     this.applyLighting();
   }
 
-  _initEnvironment() {
-    try {
-      this.scene.environmentTexture = B.CubeTexture.CreateFromPrefilteredData(ENV_URL, this.scene);
-    } catch { /* reflections are optional */ }
-  }
-
   /** Derives sun, ambient light and sky colours from Lighting.ClockTime. */
   applyLighting() {
     const L = this.dm.lighting.props;
@@ -133,7 +140,6 @@ export class WickWorld {
     this.hemi.intensity = 0.22 + 0.5 * day;
     this.hemi.diffuse = B.Color3.FromArray(mix([0.16, 0.2, 0.42], [0.78, 0.86, 1], day));
     this.hemi.groundColor = B.Color3.FromArray(mix([0.05, 0.05, 0.08], [0.34, 0.3, 0.26], day));
-    if (this.scene.environmentTexture) this.scene.environmentIntensity = 0.15 + 0.7 * day;
 
     const dusk = clamp01(1 - Math.abs(h) * 4);
     let zenith = mix([0.01, 0.02, 0.06], [0.16, 0.38, 0.8], clamp01(h * 2.5 + 0.1));
@@ -145,6 +151,7 @@ export class WickWorld {
     this.skyMat.setColor3('ground', B.Color3.FromArray(mix(horizon, [0.02, 0.02, 0.03], 0.7)));
     this.skyMat.setVector3('sunDir', toSun);
     this.skyMat.setColor3('sunColor', B.Color3.FromArray(mix([1, 0.5, 0.25], [1, 0.95, 0.8], clamp01(h * 3))).scale(h > -0.05 ? 1 : 0));
+    this.reflections?.invalidateSky();
     if (this._shadowsWanted !== undefined && this._shadowsWanted !== this._wantShadows()) this._applyQuality();
   }
 
@@ -174,7 +181,16 @@ export class WickWorld {
       this.pipeline.dispose();
       this.pipeline = null;
     }
-    this._buildShadows(t.shadows);
+    this._applyShadows(t.shadows);
+
+    // Reflection textures first, then the materials that read them.
+    this.reflections.setTier(t);
+    if (this.materials.setLook({ reflect: t.probes > 0, bump: t.bump, aniso: t.aniso })) {
+      for (const [id, mesh] of this.meshes) {
+        const inst = this.dm.find(id);
+        if (inst) mesh.material = this.materials.forPart(inst);
+      }
+    }
   }
 
   _createPipeline() {
@@ -190,19 +206,28 @@ export class WickWorld {
     this.pipeline = p;
   }
 
-  _buildShadows(size) {
-    this.shadowGen?.dispose();
-    this.shadowGen = null;
+  /**
+   * The shadow generator is created once and then resized or switched off, never rebuilt, so raising the quality
+   * mid-game cannot leave stale shadow state behind. Bias scales with the map size because texel size does.
+   */
+  _applyShadows(size) {
     this._shadowsWanted = this._wantShadows();
+    this.sun.shadowEnabled = this._shadowsWanted;
     if (!this._shadowsWanted) return;
-    const g = new B.ShadowGenerator(size, this.sun);
-    g.usePercentageCloserFiltering = true;
-    g.filteringQuality = B.ShadowGenerator.QUALITY_MEDIUM;
-    g.bias = 0.0006;
-    g.normalBias = 0.02;
-    g.darkness = 0.25;
-    this.shadowGen = g;
-    for (const [id, mesh] of this.meshes) if (this.dm.find(id)?.props.CastShadow) g.addShadowCaster(mesh);
+    let g = this.shadowGen;
+    if (!g) {
+      g = new B.ShadowGenerator(size, this.sun);
+      g.usePercentageCloserFiltering = true;
+      g.filteringQuality = B.ShadowGenerator.QUALITY_MEDIUM;
+      g.darkness = 0.25;
+      this.shadowGen = g;
+      for (const [id, mesh] of this.meshes) if (this.dm.find(id)?.props.CastShadow) g.addShadowCaster(mesh);
+    } else if (g.mapSize !== size) {
+      g.mapSize = size;
+    }
+    const k = 2048 / size;
+    g.bias = 0.0006 * k;
+    g.normalBias = 0.02 * k;
   }
 
   // ---------------------------------------------------------------- editor camera
@@ -217,13 +242,11 @@ export class WickWorld {
     this.camera = cam;
   }
 
-  get isLooking() { return this._drag?.mode === 'look'; }
-
   setKey(code, down) { if (down) this.keys.add(code); else this.keys.delete(code); }
 
   _flyCamera() {
-    if (this._drag?.mode !== 'look') return;
     const k = this.keys;
+    if (k.size === 0) return;
     const dt = this.engine.getDeltaTime() / 1000;
     const speed = (k.has('ShiftLeft') || k.has('ShiftRight') ? 42 : 14) * dt;
     const f = this.camera.getDirection(B.Axis.Z);
@@ -396,16 +419,17 @@ export class WickWorld {
 
   _bindDataModel() {
     const dm = this.dm;
-    dm.on('added', (inst) => this._syncNode(inst));
-    dm.on('removed', (inst) => this._dropNode(inst));
-    dm.on('reparented', (inst) => { for (const d of dm.descendants(inst, true)) this._syncNode(d); });
-    dm.on('changed', (inst, prop) => this._onChanged(inst, prop));
+    dm.on('added', (inst) => { this._syncNode(inst); this.reflections.touch(); });
+    dm.on('removed', (inst) => { this._dropNode(inst); this.reflections.touch(); });
+    dm.on('reparented', (inst) => { for (const d of dm.descendants(inst, true)) this._syncNode(d); this.reflections.touch(); });
+    dm.on('changed', (inst, prop) => { this._onChanged(inst, prop); this.reflections.touch(); });
     dm.on('reset', () => this.rebuildAll());
   }
 
   rebuildAll() {
     for (const id of [...this.meshes.keys()]) this._disposeMesh(id);
     for (const id of [...this.lights.keys()]) this._disposeLight(id);
+    this.reflections.reset();
     for (const inst of this.dm.descendants(this.dm.root)) this._syncNode(inst);
     this.applyLighting();
     this._applyQuality();
@@ -444,7 +468,8 @@ export class WickWorld {
     m.receiveShadows = true;
     this.meshes.set(inst.id, m);
     this._applyTransform(inst, m);
-    m.material = this._materialFor(inst);
+    this.materials.prepareMesh(inst, m);
+    m.material = this.materials.forPart(inst);
     this._applyShadowFlag(inst, m);
     this.hooks.created?.(inst, m);
     for (const c of inst.children) if (c.className === 'PointLight') this._syncNode(c);
@@ -457,6 +482,8 @@ export class WickWorld {
     if (inst) this.hooks.willDispose?.(inst);
     else this.hooks.willDispose?.({ id, className: 'Part', props: {} });
     this.shadowGen?.removeShadowCaster(m);
+    this.materials.release(id);
+    this.reflections.forget(id);
     this.highlight.removeMesh(m);
     if (this.gizmos.attachedMesh === m) this.gizmos.attachToMesh(null);
     for (const [lid, light] of this.lights) if (light.parent === m) this._disposeLight(lid);
@@ -476,30 +503,6 @@ export class WickWorld {
     if (!this.shadowGen) return;
     if (inst.props.CastShadow) this.shadowGen.addShadowCaster(m);
     else this.shadowGen.removeShadowCaster(m);
-  }
-
-  _materialFor(inst) {
-    const p = inst.props;
-    const key = `${p.Material}|${p.Color.map((n) => n.toFixed(3)).join(',')}|${p.Transparency.toFixed(2)}`;
-    let mat = this.materials.get(key);
-    if (mat) return mat;
-    mat = new B.PBRMaterial(`wick-mat-${this.materials.size}`, this.scene);
-    const c = B.Color3.FromArray(p.Color);
-    mat.albedoColor = c;
-    mat.maxSimultaneousLights = 6;
-    mat.environmentIntensity = 0.9;
-    let alpha = 1 - p.Transparency;
-    switch (p.Material) {
-      case 'Metal': mat.metallic = 1; mat.roughness = 0.28; break;
-      case 'Glass': mat.metallic = 0; mat.roughness = 0.05; alpha *= 0.4; break;
-      case 'Neon': mat.albedoColor = c.scale(0.2); mat.emissiveColor = c; mat.emissiveIntensity = 2.6; mat.metallic = 0; mat.roughness = 0.5; break;
-      case 'Wood': mat.metallic = 0; mat.roughness = 0.85; break;
-      default: mat.metallic = 0; mat.roughness = 0.45;
-    }
-    mat.alpha = alpha;
-    if (alpha < 1) mat.transparencyMode = B.PBRMaterial.PBRMATERIAL_ALPHABLEND;
-    this.materials.set(key, mat);
-    return mat;
   }
 
   _createLight(inst, mesh) {
@@ -545,9 +548,15 @@ export class WickWorld {
       if (wasSelected) this.setSelected(inst);
       return;
     }
-    if (prop === 'Position' || prop === 'Rotation' || prop === 'Size') this._applyTransform(inst, mesh);
-    else if (prop === 'Color' || prop === 'Material' || prop === 'Transparency') mesh.material = this._materialFor(inst);
-    else if (prop === 'CastShadow') this._applyShadowFlag(inst, mesh);
+    if (prop === 'Position' || prop === 'Rotation' || prop === 'Size') {
+      this._applyTransform(inst, mesh);
+      if (prop === 'Size') this.materials.prepareMesh(inst, mesh);
+    } else if (prop === 'Color' || prop === 'Material' || prop === 'Transparency') {
+      this.materials.release(inst.id);
+      this.reflections.forget(inst.id);
+      this.materials.prepareMesh(inst, mesh);
+      mesh.material = this.materials.forPart(inst);
+    } else if (prop === 'CastShadow') this._applyShadowFlag(inst, mesh);
     this.hooks.changed?.(inst, prop, mesh);
   }
 

@@ -1,12 +1,13 @@
-// Wick Engine boot: loads Babylon.js and Havok, starts the WASM core, then hands over to the studio.
-// Library URLs are the only version-sensitive setting. Pin them once you have tested a release.
+// Wick Engine boot: loads Babylon.js and Havok from core/third_party, starts the WASM core, then hands over to the studio.
+// Both libraries are served from this repo, so the Pages workflow has to copy them into the site (see pages.yml).
 
 import { WickCore } from './engine/core.js';
 
-// I don't know why local scripts fail to load, so I'm externally referencing for now.
 const LIBS = {
-  babylon: 'https://cdn.babylonjs.com/babylon.js',
-  havok: 'https://cdn.babylonjs.com/havok/HavokPhysics_umd.js',
+  babylon: 'core/third_party/babylon.js',
+  havok: 'core/third_party/HavokPhsyics_umd.js',
+  // Havok's UMD script does not contain the physics engine itself: it fetches this file at start-up.
+  havokWasm: 'core/third_party/HavokPhysics.wasm',
 };
 
 const root = document.getElementById('wick-root');
@@ -28,11 +29,21 @@ function loadScript(src) {
   return new Promise((resolve, reject) => {
     const el = document.createElement('script');
     el.src = src;
-    el.crossOrigin = 'anonymous';
     el.onload = resolve;
-    el.onerror = () => reject(new Error(`Could not load ${src}. Check your connection.`));
+    el.onerror = () => reject(new Error(`Could not load ${src}. Check that the file is in the repo and was copied to the site.`));
     document.head.append(el);
   });
+}
+
+async function startHavok() {
+  if (typeof globalThis.HavokPhysics !== 'function') {
+    throw new Error(`${LIBS.havok} loaded but defines no HavokPhysics function. It must be the UMD build, HavokPhysics_umd.js.`);
+  }
+  const probe = await fetch(LIBS.havokWasm, { method: 'HEAD' }).catch(() => null);
+  if (!probe?.ok) {
+    throw new Error(`${LIBS.havokWasm} is missing. Havok needs HavokPhysics.wasm from the same @babylonjs/havok version as the UMD script, in the same folder.`);
+  }
+  return globalThis.HavokPhysics({ locateFile: (file) => (file.endsWith('.wasm') ? LIBS.havokWasm : file) });
 }
 
 async function boot() {
@@ -41,8 +52,9 @@ async function boot() {
   }
   splash('Loading Babylon.js and Havok...');
   await Promise.all([loadScript(LIBS.babylon), loadScript(LIBS.havok)]);
+  if (!globalThis.BABYLON) throw new Error(`${LIBS.babylon} loaded but defines no BABYLON. It must be the UMD build (babylon.js).`);
   splash('Starting physics...');
-  const havok = await globalThis.HavokPhysics();
+  const havok = await startHavok();
   splash('Starting the Lua core...');
   const core = await WickCore.load();
   splash('Opening the studio...');

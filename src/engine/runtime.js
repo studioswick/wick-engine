@@ -1,11 +1,11 @@
 // Wick Engine runtime: one Play session from start to stop.
 // Play snapshots the project, builds physics and audio, starts the Lua VM and runs every Script.
-// Stop tears all of that down and reloads the snapshot, so nothing a game does leaks into the project.
+// Pause freezes scripts, physics and audio while the viewport stays live. Stop tears everything down and
+// reloads the snapshot, so nothing a game does leaks into the project.
 
 import { propDef } from './datamodel.js';
 
 const SEP = '\x1f';
-const HEAP_MB = 96;
 const MAX_TOUCH_EVENTS_PER_FRAME = 64;
 const MAX_LOG_PER_SECOND = 300;
 
@@ -33,18 +33,24 @@ function encode(def, v) {
 const TAG_FOR_TYPE = { number: 'n', boolean: 'b', string: 's', source: 's', enum: 's', vector3: 'v', color: 'c' };
 
 export class WickRuntime {
-  constructor({ dm, world, physics, audio, core, guard, log }) {
-    Object.assign(this, { dm, world, physics, audio, core, guard, log });
+  constructor({ dm, world, physics, audio, core, guard, limits, log }) {
+    Object.assign(this, { dm, world, physics, audio, core, guard, limits, log });
     this.playing = false;
+    this.paused = false;
+    this.autoPaused = false; // paused because the tab was hidden, so it resumes when the tab returns
     this.starting = false;
     this.scriptMs = 0;
     this.events = [];
     this.onStateChange = null; // (playing, reason|null) => void
+    this.onPauseChange = null; // (paused) => void
     this._offs = [];
+    this._down = new Map(); // input name -> device ('Keyboard' | 'Mouse') for every key or button held right now
     physics.onTouched = (id, other) => {
       if (this.events.length < 1024) this.events.push(['touched', [`i${id}`, `i${other}`]]);
     };
-    guard.context = () => ({ playing: this.playing, scriptMs: this.scriptMs, bodies: physics.count });
+    physics.onImpact = (a, b, strength, at, mass) => { if (this.playing) this.audio.impact(a, b, strength, at, mass); };
+    // While paused the guard only watches graphics: nothing is running that could hang or run away.
+    guard.context = () => ({ playing: this.playing && !this.paused, scriptMs: this.scriptMs, bodies: physics.count });
   }
 
   get heapBytes() { return this.playing ? this.core.heapBytes : 0; }
@@ -60,10 +66,13 @@ export class WickRuntime {
       this._logWindow = { start: performance.now(), count: 0, warned: false };
       this.events.length = 0;
 
+      const lim = this.limits.values;
       core.hostHandler = (op, id, a, b) => this._host(op, id, a, b);
-      if (core.open(HEAP_MB) !== 0) throw new Error('The Lua VM failed to start');
+      if (core.open(lim.luaHeapMB, lim.scriptSliceMs, lim.scriptFrameMs) !== 0) throw new Error('The Lua VM failed to start');
 
       this.playing = true;
+      this._setPaused(false);
+      this._down.clear();
       world.setPlaying(true);
       physics.start(dm.workspace.props.Gravity);
       world.hooks = {
@@ -99,6 +108,8 @@ export class WickRuntime {
     if (!this.playing) return;
     const { dm, world } = this;
     this.playing = false;
+    this._setPaused(false);
+    this._down.clear();
     world.scene.onBeforeRenderObservable.remove(this._tickObs);
     this._offs.forEach((off) => off());
     this._offs = [];
@@ -115,10 +126,37 @@ export class WickRuntime {
     this.onStateChange?.(false, reason);
   }
 
+  // ------------------------------------------------------------------ pause
+
+  _setPaused(paused, auto = false) {
+    this.paused = paused;
+    this.autoPaused = paused && auto;
+    this.world.paused = paused;
+    this.onPauseChange?.(paused);
+  }
+
+  /** Freezes the game. auto marks a pause made because the tab was hidden. */
+  pause(auto = false) {
+    if (!this.playing || this.paused) return;
+    this.releaseInputs(); // deliver key and button releases so no input stays stuck in Lua while frozen
+    this._flushEvents();
+    this._setPaused(true, auto);
+    this.physics.setPaused(true);
+    this.audio.pause();
+  }
+
+  resume() {
+    if (!this.playing || !this.paused) return;
+    this._setPaused(false);
+    this.physics.setPaused(false);
+    this.audio.resume();
+    this.guard.reset(true); // the pause is not a slow frame
+  }
+
   // ------------------------------------------------------------------ per-frame
 
   _tick() {
-    if (!this.playing) return;
+    if (!this.playing || this.paused) return;
     const t0 = performance.now();
     const dt = Math.min(this.world.engine.getDeltaTime() / 1000, 0.1);
     this._flushEvents();
@@ -139,12 +177,25 @@ export class WickRuntime {
     }
   }
 
-  onKey(code, down, repeat) {
-    if (this.playing && !repeat) this.events.push(['input', [down ? 'sbegin' : 'send', `s${keyName(code)}`, 'sKeyboard']]);
+  _input(down, name, device) {
+    if (!this.playing || this.paused) return;
+    if (down) {
+      if (this._down.has(name)) return; // key repeat
+      this._down.set(name, device);
+    } else if (!this._down.delete(name)) {
+      return; // released something that was not pressed during this session
+    }
+    this.events.push(['input', [down ? 'sbegin' : 'send', `s${name}`, `s${device}`]]);
   }
 
-  onMouse(button, down) {
-    if (this.playing) this.events.push(['input', [down ? 'sbegin' : 'send', `s${button}`, 'sMouse']]);
+  onKey(code, down) { this._input(down, keyName(code), 'Keyboard'); }
+  onMouse(button, down) { this._input(down, button, 'Mouse'); }
+
+  /** Ends every held key and button (window lost focus, or the game is pausing). */
+  releaseInputs() {
+    if (!this.playing) return;
+    for (const [name, device] of this._down) this.events.push(['input', ['send', `s${name}`, `s${device}`]]);
+    this._down.clear();
   }
 
   // ------------------------------------------------------------------ live reads and reactions
@@ -163,12 +214,12 @@ export class WickRuntime {
     const { physics } = this;
     if (prop === 'Position' || prop === 'Rotation') physics.teleport(inst.id);
     else if (prop === 'Velocity') physics.setVelocity(inst.id, inst.props.Velocity);
-    else if (['Size', 'Anchored', 'CanCollide', 'Density', 'Bounciness', 'Friction'].includes(prop)) physics.add(inst, mesh);
+    else if (['Size', 'Anchored', 'CanCollide', 'Density', 'Bounciness', 'Friction', 'Material'].includes(prop)) physics.add(inst, mesh);
   }
 
   _changed(inst, prop) {
     if (inst === this.dm.workspace && prop === 'Gravity') this.physics.setGravity(inst.props.Gravity);
-    else if (inst.className === 'Sound' && prop === 'Volume') this.audio.setVolume(inst.id, inst.props.Volume);
+    else if (inst.className === 'Sound' && ['Volume', 'Looped', 'MaxDistance'].includes(prop)) this.audio.update(inst);
   }
 
   _addSound(inst) {

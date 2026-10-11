@@ -28,8 +28,10 @@ jobs:
         run: ./build.sh
       - name: Assemble site
         run: |
-          mkdir dist
+          mkdir -p dist/core/third_party
           cp -r index.html style src wasm dist/
+          # Only the two runtime libraries are published, not the Lua sources. Havok* picks up its .wasm too.
+          cp core/third_party/babylon.js core/third_party/Havok* dist/core/third_party/
           touch dist/.nojekyll
       - uses: actions/upload-pages-artifact@v3
         with:

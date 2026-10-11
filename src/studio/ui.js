@@ -23,6 +23,7 @@ const ICONS = {
   scale: '<rect x="2.5" y="6.5" width="7" height="7"/><path d="M7 9l6.5-6.5M9.5 2.5h4v4"/>',
   play: '<path d="M4.5 3l8 5-8 5z" fill="currentColor"/>',
   stop: '<rect x="3.5" y="3.5" width="9" height="9" rx="1" fill="currentColor"/>',
+  pause: '<rect x="3.5" y="3" width="3.2" height="10" rx="0.8" fill="currentColor"/><rect x="9.3" y="3" width="3.2" height="10" rx="0.8" fill="currentColor"/>',
   block: '<path d="M8 1.8l5.5 3v6.4L8 14.2l-5.5-3V4.8zM2.5 4.8L8 8l5.5-3.2M8 8v6.2"/>',
   ball: '<circle cx="8" cy="8" r="5.5"/><path d="M2.6 7.2c3 1.4 7.8 1.4 10.8 0"/>',
   cylinder: '<ellipse cx="8" cy="4" rx="4.5" ry="1.8"/><path d="M3.5 4v8c0 1 2 1.8 4.5 1.8s4.5-.8 4.5-1.8V4"/>',
@@ -226,7 +227,8 @@ export function toast(message, kind = 'info') {
 export function installAppFeel({ onFileDrop, isDirty } = {}) {
   const editable = (t) => !!t?.closest?.('input, textarea, [contenteditable="true"]');
 
-  document.addEventListener('contextmenu', (e) => e.preventDefault());
+  // Capture phase, so no element that stops propagation (Explorer rows do) can let the browser's own menu through.
+  document.addEventListener('contextmenu', (e) => e.preventDefault(), true);
   document.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); }); // no autoscroll cursor
   document.addEventListener('auxclick', (e) => e.preventDefault());
   document.addEventListener('wheel', (e) => { if (e.ctrlKey) e.preventDefault(); }, { passive: false }); // pinch and ctrl+wheel

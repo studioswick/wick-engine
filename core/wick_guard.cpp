@@ -16,15 +16,19 @@ enum Action { kNone = 0, kDegrade = 1, kStop = 2 };
 enum Reason { kNoReason = 0, kLowFps = 1, kHitch = 2, kScriptLoad = 3, kMemory = 4, kBodies = 5 };
 
 constexpr int kMaxTier = 3;               // 0 High, 1 Medium, 2 Low, 3 Minimal
-constexpr double kSlowMs = 38.0;          // smoothed frame time that counts as "slow" (about 26 fps)
 constexpr double kSlowSeconds = 2.5;      // sustained slowness before dropping a tier
-constexpr double kCriticalMs = 125.0;     // about 8 fps
 constexpr double kCriticalSeconds = 6.0;  // sustained at the floor before stopping
-constexpr double kHitchMs = 4000.0;       // a single frame this long means the tab is about to freeze
 constexpr double kScriptShare = 0.6;      // scripts using this share of a slow frame means graphics are not the problem
 constexpr double kScriptSeconds = 4.0;
 constexpr double kHeapStopRatio = 0.9;    // JS heap used / limit
 constexpr double kWarmupSeconds = 3.0;    // shader compiles and asset setup are allowed to be slow
+
+// Thresholds the user (or the hardware diagnostic) can change. They survive wick_guard_reset.
+struct Limits {
+  double slowMs = 38.0;       // smoothed frame time that counts as "slow" (about 26 fps)
+  double criticalMs = 125.0;  // frame time at the lowest quality that counts as unplayable (about 8 fps)
+  double hitchMs = 4000.0;    // a single frame this long means the tab is about to freeze
+};
 
 struct State {
   int tier = 0;
@@ -40,6 +44,7 @@ struct State {
 };
 
 State g;
+Limits L;
 
 int stop(int reason) {
   g.reason = reason;
@@ -47,6 +52,13 @@ int stop(int reason) {
 }
 
 }  // namespace
+
+// Frame-rate thresholds are given as FPS and the hitch as seconds.
+WICK_EXPORT void wick_guard_limits(double degradeFps, double stopFps, double hitchSeconds) {
+  L.slowMs = 1000.0 / std::max(degradeFps, 1.0);
+  L.criticalMs = 1000.0 / std::max(stopFps, 0.5);
+  L.hitchMs = std::max(hitchSeconds, 0.5) * 1000.0;
+}
 
 // fixedTier: -1 for automatic quality, otherwise the locked tier. startTier is only used in automatic mode.
 WICK_EXPORT void wick_guard_reset(int maxBodies, int fixedTier, int startTier) {
@@ -64,7 +76,7 @@ WICK_EXPORT int wick_guard_tick(double frameMs, double scriptMs, double heapRati
   const bool warm = g.age < kWarmupSeconds;
 
   if (playing) {
-    if (!warm && frameMs >= kHitchMs) return stop(kHitch);
+    if (!warm && frameMs >= L.hitchMs) return stop(kHitch);
     if (heapRatio > kHeapStopRatio) return stop(kMemory);
     if (bodies > g.maxBodies) return stop(kBodies);
   }
@@ -73,7 +85,7 @@ WICK_EXPORT int wick_guard_tick(double frameMs, double scriptMs, double heapRati
   g.scriptEma += (scriptMs - g.scriptEma) * 0.1;
   if (warm) return kNone;
 
-  const bool slow = g.frameEma > kSlowMs;
+  const bool slow = g.frameEma > L.slowMs;
   const bool scriptBound = playing && slow && g.scriptEma > g.frameEma * kScriptShare;
 
   g.slowSeconds = slow ? g.slowSeconds + dt : std::max(0.0, g.slowSeconds - dt * 2.0);
@@ -89,7 +101,7 @@ WICK_EXPORT int wick_guard_tick(double frameMs, double scriptMs, double heapRati
   }
 
   const bool atFloor = g.fixedTier >= 0 || g.tier >= kMaxTier;
-  const bool critical = playing && atFloor && g.frameEma > kCriticalMs;
+  const bool critical = playing && atFloor && g.frameEma > L.criticalMs;
   g.criticalSeconds = critical ? g.criticalSeconds + dt : std::max(0.0, g.criticalSeconds - dt);
   if (g.criticalSeconds > kCriticalSeconds) return stop(kLowFps);
 

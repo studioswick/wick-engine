@@ -2,13 +2,14 @@
 -- Loaded once per Play session inside the WASM Lua VM. Game scripts run in a sandbox (`G`, bottom of file)
 -- and never see the real globals. All engine access goes through one C function, host(op, id, a, b) -> string.
 
-local host, slice, elapsed = __wick_host, __wick_slice, __wick_elapsed
-__wick_host, __wick_slice, __wick_elapsed = nil, nil, nil
+local host, slice, elapsed, limits = __wick_host, __wick_slice, __wick_elapsed, __wick_limits
+__wick_host, __wick_slice, __wick_elapsed, __wick_limits = nil, nil, nil, nil
 local getmt = debug.getmetatable -- ignores __metatable, so internal type checks keep working
 
 local SEP = "\31"                -- separates items in encoded lists
-local FIRST_SLICE, SLICE = 1000, 100  -- per-resume time budgets in ms (first run of a script, later resumes)
-local FRAME_BUDGET = 35          -- ms of script work per frame before sleeping threads are pushed to the next frame
+-- Time budgets in ms, from the WickGuard limits: per resume (first run of a script, later resumes), and the script
+-- work allowed per frame before sleeping threads are pushed to the next frame.
+local FIRST_SLICE, SLICE, FRAME_BUDGET = limits()
 
 -- ---------------------------------------------------------------------------------------------
 -- Value types

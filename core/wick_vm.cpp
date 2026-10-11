@@ -46,9 +46,17 @@ static const char kRuntimeSource[] =
 namespace {
 
 constexpr int kHookInterval = 5000;      // VM instructions between time checks
-constexpr double kFirstRunBudgetMs = 1000;
-constexpr double kEventBudgetMs = 100;
-constexpr double kStepBudgetMs = 200;    // outer guard; the scheduler gives each script its own slice
+
+// Time budgets, set by wick_vm_open from the WickGuard limits. A script may run sliceMs without waiting; its
+// first run gets ten times that, events get one slice and the per-frame step gets two (an outer guard, since the
+// scheduler gives each script its own slice). frameMs is how much script time one frame may use.
+struct Budgets {
+  double firstRunMs = 1000;
+  double eventMs = 100;
+  double stepMs = 200;
+  double sliceMs = 100;
+  double frameMs = 35;
+};
 
 // Allocator wrapper that enforces a heap cap. Lua runs a full GC and retries before surfacing a failure.
 struct HeapMeter {
@@ -62,7 +70,8 @@ struct HeapMeter {
 HeapMeter g_heap;
 lua_State* g_L = nullptr;
 double g_sliceStart = 0;
-double g_sliceBudgetMs = kStepBudgetMs;
+Budgets g_budget;
+double g_sliceBudgetMs = 200;
 double g_stepStart = 0;
 double g_lastStepMs = 0;
 bool g_fatal = false;
@@ -114,6 +123,14 @@ int hostSlice(lua_State* L) {
   return 0;
 }
 
+// limits() -> firstSliceMs, sliceMs, frameBudgetMs, read once when the Lua runtime loads.
+int hostLimits(lua_State* L) {
+  lua_pushnumber(L, g_budget.firstRunMs);
+  lua_pushnumber(L, g_budget.sliceMs);
+  lua_pushnumber(L, g_budget.frameMs);
+  return 3;
+}
+
 int hostElapsed(lua_State* L) {
   lua_pushnumber(L, wickNow() - g_stepStart);
   return 1;
@@ -148,10 +165,15 @@ WICK_EXPORT void wick_vm_close() {
   g_L = nullptr;
 }
 
-// Returns 0 on success. heapMB caps total Lua memory.
-WICK_EXPORT int wick_vm_open(int heapMB) {
+// Returns 0 on success. heapMB caps total Lua memory; sliceMs and frameMs are the script time budgets.
+WICK_EXPORT int wick_vm_open(int heapMB, double sliceMs, double frameMs) {
   wick_vm_close();
   g_fatal = false;
+  g_budget.sliceMs = std::max(sliceMs, 5.0);
+  g_budget.firstRunMs = g_budget.sliceMs * 10;
+  g_budget.eventMs = g_budget.sliceMs;
+  g_budget.stepMs = g_budget.sliceMs * 2;
+  g_budget.frameMs = std::max(frameMs, 1.0);
   g_L = luaL_newstate();
   if (!g_L) return 1;
 
@@ -167,11 +189,13 @@ WICK_EXPORT int wick_vm_open(int heapMB) {
   lua_setglobal(g_L, "__wick_slice");
   lua_pushcfunction(g_L, hostElapsed);
   lua_setglobal(g_L, "__wick_elapsed");
+  lua_pushcfunction(g_L, hostLimits);
+  lua_setglobal(g_L, "__wick_limits");
   lua_sethook(g_L, budgetHook, LUA_MASKCOUNT, kHookInterval);
 
   g_stepStart = wickNow();
   if (luaL_loadbufferx(g_L, kRuntimeSource, sizeof(kRuntimeSource) - 1, "=wick_runtime", nullptr) != LUA_OK ||
-      invoke(0, kFirstRunBudgetMs) != LUA_OK) {
+      invoke(0, g_budget.firstRunMs) != LUA_OK) {
     const char* msg = lua_gettop(g_L) > 0 ? lua_tostring(g_L, -1) : nullptr;
     if (msg) logLine("error", msg);
     wick_vm_close();
@@ -187,7 +211,7 @@ WICK_EXPORT int wick_vm_run(const char* chunkName, const char* source) {
   lua_getglobal(g_L, "__wick_run");
   lua_pushstring(g_L, chunkName);
   lua_pushstring(g_L, source);
-  return invoke(2, kFirstRunBudgetMs);
+  return invoke(2, g_budget.firstRunMs);
 }
 
 // Advances timers and fires Heartbeat. Returns 0 ok, 1 script error (already logged), 2 fatal (heap exhausted).
@@ -196,7 +220,7 @@ WICK_EXPORT int wick_vm_step(double dtSeconds) {
   g_stepStart = wickNow();
   lua_getglobal(g_L, "__wick_step");
   lua_pushnumber(g_L, dtSeconds);
-  const int rc = invoke(1, kStepBudgetMs);
+  const int rc = invoke(1, g_budget.stepMs);
   g_lastStepMs = wickNow() - g_stepStart;
   return g_fatal ? 2 : (rc == LUA_OK ? 0 : 1);
 }
@@ -208,7 +232,7 @@ WICK_EXPORT void wick_vm_event(const char* name, const char* payload) {
   lua_getglobal(g_L, "__wick_event");
   lua_pushstring(g_L, name);
   lua_pushstring(g_L, payload);
-  invoke(2, kEventBudgetMs);
+  invoke(2, g_budget.eventMs);
 }
 
 WICK_EXPORT double wick_vm_last_ms() { return g_lastStepMs; }

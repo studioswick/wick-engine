@@ -1,10 +1,27 @@
 // Wick Engine data model: the instance tree every system (Studio, renderer, physics, Lua) shares.
 // Pure data and events. No DOM and no Babylon, so it can run headless.
 
-export const WICK_LIMITS = Object.freeze({ maxParts: 2500, maxSourceChars: 200000 });
+import { WICK_SOUNDS, soundId } from './library.js';
+import { WICK_VERSION } from '../version.js';
+
+/** Hard limits. maxParts is set by WickGuard from the device's performance (see guard.js). */
+export const WICK_LIMITS = { maxParts: 2500, maxSourceChars: 200000 };
 
 export const SHAPES = ['Block', 'Ball', 'Cylinder'];
-export const MATERIALS = ['Plastic', 'Metal', 'Glass', 'Neon', 'Wood'];
+export const MATERIALS = ['Plastic', 'Metal', 'Glass', 'Neon', 'Wood', 'Grass'];
+
+/**
+ * How each material behaves. grip scales Friction, bounce scales Bounciness, roll is the rolling resistance of
+ * round parts, soft is how much the surface deadens impact sounds (0 rings, 1 thuds).
+ */
+export const SURFACES = {
+  Plastic: { grip: 1.0, bounce: 1.0, roll: 0.25, soft: 0.35 },
+  Metal: { grip: 0.75, bounce: 0.9, roll: 0.12, soft: 0.05 },
+  Glass: { grip: 0.55, bounce: 0.8, roll: 0.12, soft: 0.05 },
+  Neon: { grip: 0.9, bounce: 1.0, roll: 0.2, soft: 0.3 },
+  Wood: { grip: 1.15, bounce: 0.7, roll: 0.3, soft: 0.55 },
+  Grass: { grip: 1.5, bounce: 0.35, roll: 0.6, soft: 0.9 },
+};
 
 // Property schema helpers. `cat` groups a property in the Properties panel.
 const num = (def, o = {}) => ({ type: 'number', default: def, ...o });
@@ -52,13 +69,14 @@ export const CLASS_DEFS = {
   PointLight: {
     props: {
       Color: col([1, 0.85, 0.6], { cat: 'Light' }),
-      Brightness: num(2, { min: 0, max: 50, step: 0.25, cat: 'Light' }),
-      Range: num(24, { min: 1, max: 500, step: 1, cat: 'Light' }),
+      // PBR lights fall off with the inverse square of distance, so useful values run into the hundreds.
+      Brightness: num(60, { min: 0, max: 100000, step: 1, cat: 'Light' }),
+      Range: num(30, { min: 1, max: 500, step: 1, cat: 'Light' }),
     },
   },
   Sound: {
     props: {
-      SoundId: { type: 'string', default: 'wick://tone/hum', cat: 'Sound', suggest: ['wick://tone/hum', 'wick://tone/thud'] },
+      SoundId: { type: 'string', default: soundId('hum'), cat: 'Sound', suggest: WICK_SOUNDS.map(soundId) },
       Volume: num(0.6, { min: 0, max: 2, step: 0.05, cat: 'Sound' }),
       Looped: bool(false, { cat: 'Sound' }),
       PlayOnStart: bool(false, { cat: 'Sound' }),
@@ -176,8 +194,8 @@ export class WickDataModel {
     this.scripts = find('Scripts');
   }
 
-  _make(className, wantedId = null) {
-    if (className === 'Part' && this._partCount >= WICK_LIMITS.maxParts) {
+  _make(className, wantedId = null, enforceLimit = true) {
+    if (enforceLimit && className === 'Part' && this._partCount >= WICK_LIMITS.maxParts) {
       throw new Error(`Part limit reached (${WICK_LIMITS.maxParts})`);
     }
     const id = wantedId && !this._byId.has(wantedId) ? wantedId : this._nextId++;
@@ -324,7 +342,7 @@ export class WickDataModel {
   _build(node, keepIds) {
     const def = CLASS_DEFS[node?.class];
     if (!def || (def.creatable === false && !def.service && node.class !== 'DataModel')) return null;
-    const inst = this._make(node.class, keepIds ? node.id : null);
+    const inst = this._make(node.class, keepIds ? node.id : null, !keepIds); // opening a project never trips the part limit
     for (const [k, v] of Object.entries(node.props || {})) {
       try { this._assign(inst, k, v); } catch { /* ignore stale or invalid saved values */ }
     }
@@ -351,7 +369,8 @@ export class WickDataModel {
   }
 
   toJSON() {
-    return { format: 'wick-project', version: 1, name: this.projectName, nextId: this._nextId, root: this.serializeNode(this.root) };
+    // version is the file format; engine records which Wick Engine build saved the project.
+    return { format: 'wick-project', version: 1, engine: WICK_VERSION, name: this.projectName, nextId: this._nextId, root: this.serializeNode(this.root) };
   }
 
   load(data) {
@@ -378,7 +397,7 @@ export class WickDataModel {
     this.projectName = name;
     this.create('Part', this.workspace, {
       Name: 'Baseplate', Size: [120, 1, 120], Position: [0, -0.5, 0], Anchored: true, CastShadow: false,
-      Color: [0.36, 0.52, 0.34],
+      Material: 'Grass', Color: [1, 1, 1],
     });
     this.emit('reset');
   }

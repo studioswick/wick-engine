@@ -19,7 +19,7 @@ export class WickCore {
     const m = await factory({ wickHost: (op, id, a, b) => core.hostHandler(op, id, a, b) });
     core.m = m;
     const fn = (name, ret, args) => m.cwrap(name, ret, args);
-    core._open = fn('wick_vm_open', 'number', ['number']);
+    core._open = fn('wick_vm_open', 'number', ['number', 'number', 'number']);
     core._close = fn('wick_vm_close', null, []);
     core._run = fn('wick_vm_run', 'number', ['number', 'number']);
     core._step = fn('wick_vm_step', 'number', ['number']);
@@ -27,6 +27,7 @@ export class WickCore {
     core._lastMs = fn('wick_vm_last_ms', 'number', []);
     core._heap = fn('wick_vm_heap_bytes', 'number', []);
     core._fatal = fn('wick_vm_fatal', 'number', []);
+    core._gLimits = fn('wick_guard_limits', null, ['number', 'number', 'number']);
     core._gReset = fn('wick_guard_reset', null, ['number', 'number', 'number']);
     core._gTick = fn('wick_guard_tick', 'number', ['number', 'number', 'number', 'number', 'number']);
     core._gTier = fn('wick_guard_tier', 'number', []);
@@ -46,7 +47,8 @@ export class WickCore {
     try { return fn(...ptrs); } finally { ptrs.forEach((p) => m._free(p)); }
   }
 
-  open(heapMB = 96) { return this._open(heapMB); }
+  /** Starts the VM: heapMB caps script memory, sliceMs is the time a script may run without waiting, frameMs the script time per frame. */
+  open(heapMB = 96, sliceMs = 100, frameMs = 35) { return this._open(heapMB, sliceMs, frameMs); }
   close() { this._close(); }
   run(name, source) { return this._withStrings([name, source], (a, b) => this._run(a, b)); }
   /** 0 ok, 1 a script errored (already logged), 2 fatal (stop the game). */
@@ -56,6 +58,7 @@ export class WickCore {
   get heapBytes() { return this._heap(); }
   get fatal() { return this._fatal() === 1; }
 
+  guardLimits(degradeFps, stopFps, hitchSeconds) { this._gLimits(degradeFps, stopFps, hitchSeconds); }
   guardReset(maxBodies, fixedTier, startTier) { this._gReset(maxBodies, fixedTier, startTier); }
   /** 0 nothing, 1 lower the quality tier, 2 stop the game. */
   guardTick(frameMs, scriptMs, heapRatio, bodies, playing) {
