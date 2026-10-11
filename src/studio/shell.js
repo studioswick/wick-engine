@@ -98,7 +98,7 @@ export function startStudio({ root, havok, core }) {
   const explorer = new WickExplorer(studio, explorerEl);
   new WickProperties(studio, propsEl);
   const editor = new WickScriptEditor(studio, { tabsEl, panesEl, viewportPane });
-  const project = new WickProject(studio, { onStatus: status, onTitle: (n) => { titleBtn.textContent = n; document.title = `${n} ∙ Wick Engine`; } });
+  const project = new WickProject(studio, { onStatus: status, onTitle: (n) => { titleBtn.textContent = n; document.title = `${n} | Wick Engine`; } });
 
   world.onPick = (inst) => studio.select(inst);
   world.onTransformCommit = () => studio.commit();
