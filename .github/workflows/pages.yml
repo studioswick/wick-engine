@@ -25,7 +25,7 @@ jobs:
         with:
           version: latest
       - name: Build WASM core
-        run: ./build.sh
+        run: bash ./build.sh
       - name: Assemble site
         run: |
           mkdir -p dist/core/third_party
