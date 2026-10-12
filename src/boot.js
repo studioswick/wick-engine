@@ -5,7 +5,7 @@ import { WickCore } from './engine/core.js';
 
 const LIBS = {
   babylon: 'core/third_party/babylon.js',
-  havok: 'core/third_party/HavokPhyics_umd.js',
+  havok: 'core/third_party/HavokPhysics_umd.js',
   // Havok's UMD script does not contain the physics engine itself: it fetches this file at start-up.
   havokWasm: 'core/third_party/HavokPhysics.wasm',
 };
