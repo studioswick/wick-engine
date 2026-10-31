@@ -1,18 +1,21 @@
 # Wick Engine
 
 A browser game engine by Wick Studios. Studio-style editor, Babylon.js rendering, Havok physics, Lua 5.5 scripting.
-Pre-alpha, version **p0.2.0** (see Versioning below).
+Pre-alpha, version **p0.3.0** (see Versioning below).
 
 ## How it fits together
 
 | Layer | Language | Lives in | Job |
 |---|---|---|---|
-| Core | C++ -> WebAssembly | `core/` | Lua VM host, sandbox limits (heap cap, per-script time budget), WickGuard safety policy |
+| Core | C++ -> WebAssembly | `core/` | Lua VM host, sandbox limits (heap cap, per-script time budget), WickGuard safety policy (with a minimum-graphics floor) |
 | Script API | Lua | `core/wick_runtime.lua` | `Instance`, `Vector3`, `task`, signals, services. Embedded into the wasm at build time |
 | Engine | JavaScript | `src/engine/` | Data model, Babylon scene, materials and live reflections, Havok bodies, audio, Play/Pause/Stop sessions, WickGuard limits, hardware diagnostic |
-| Library | JavaScript | `src/engine/library.js` | Built-in sounds and Wood/Grass textures, generated in code (no asset files) |
-| Studio | JavaScript | `src/studio/` | Editor UI, Explorer, Properties, script editor |
-| Projects | JavaScript | `src/project/` | Autosave, `.wick` files, demo project |
+| Library | JavaScript | `src/engine/library.js`, `assets.js`, `meshio.js`, `bundles.js`, `libscripts.js`, `src/library/scripts/*.lua` | Built-in sounds, textures and meshes generated in code; imported assets (images, audio, OBJ/STL/PLY/GLB meshes, Lua, bundles) stored in IndexedDB; bundles such as the Player |
+| UI | JavaScript | `src/engine/gui.js` | Renders the `Gui` service as DOM (UDim2 layout, lists, grids, events) and edits it visually |
+| Sky and grass | JavaScript | `src/engine/sky.js`, `grass.js` | Day/night cycle, stars, moon, volumetric clouds; thin-instanced wind-swayed grass |
+| Studio | JavaScript | `src/studio/` | Editor UI, Explorer, Properties, script editor, Library dialog, Text-only Interface |
+| Projects | JavaScript | `src/project/` | IndexedDB autosave, `.wick` files, templates, text projects, game export, zip |
+| Player | JavaScript | `src/player.js` | Runs an exported game (`game/game.wick`) full screen |
 
 The browser only exposes WebGL, Havok and the DOM to JavaScript, so the C++ core owns everything that can run
 away (scripts, memory, the safety policy) and JavaScript applies its decisions.
@@ -98,6 +101,40 @@ View > Graphics Quality > Run Hardware Diagnostic.
 Limits (View > WickGuard Limits) all have a hardware-based default and can be edited or reset to the defaults:
 parts per project, physics bodies, script memory, script time without waiting, script time per frame, the frame
 rates that lower graphics and stop the game, and the frozen-frame time. Script limits apply on the next Play.
+
+## New in p0.3.0
+
+- **Editing**: snapping (move 1 stud, rotate 15 degrees, scale 0.5, editable in the box at the bottom right of the viewport),
+  Shift-click multi-select, group as Model (Parts only) or Folder (Ctrl+G / Ctrl+Shift+G), ungroup (Ctrl+U), a
+  `CameraPoint` (one per project, on a Part) that owns the camera while playing.
+- **Library** (between View and Help): sounds, textures, meshes, scripts, bundles, and **Import Files** for images, audio,
+  `.obj .stl .ply .glb .gltf` models (they become Parts with `Shape = Mesh`), `.lua` and `.wickbundle`. Everything imported
+  is saved in IndexedDB. Includes the **Player** bundle (17 limbs, IK, orbit camera) and the unlit **Void** texture.
+- **UI system**: `ScreenGui`, `Frame`, `TextLabel`, `TextButton`, `TextBox`, `ImageLabel`, `ImageButton`, `ScrollingFrame` and
+  `UICorner / UIStroke / UIPadding / UIListLayout / UIGridLayout / UIAspectRatioConstraint / UIScale / UIGradient`, edited visually
+  (drag and resize handles) or from Lua, with `UDim2`, `Vector2` and `TweenService`.
+- **Graphics**: rewritten day/night cycle with moon, stars and fog; volumetric clouds (High full, Medium lite, Low and Minimal a
+  painted sky); real grass blades with wind (High and Medium); `Lighting.MinGraphics` lets a game set its lowest quality.
+- **Physics under lag**: fixed 1/60 s steps with catch-up and render interpolation. Lag no longer destabilises physics or slows the game.
+- **Text-only Interface** (View menu) and `SKILL.md`: the whole project as files (`tree.wtree`, `scripts/*.lua`, `assets/`) for AI
+  agents, synced with a real folder, with errors written to `.wick/output.log` and `run` / `stop` through `.wick/command`.
+- **Templates** (File > New Project), **game export** (File > Export Game) and an installable, **offline** PWA (`manifest.json`, `sw.js`).
+
+## Publishing a game (GitHub Pages)
+
+1. In the Studio: File > Export Game > GitHub kit. It contains `game/game.wick`, `game/game.json` and `HOW-TO-PUBLISH.txt`.
+2. Fork this repository, add the `game/` folder to your fork, and set Settings > Pages > Source to GitHub Actions.
+3. The workflow builds the engine and deploys it. When `game/game.json` exists the site boots straight into your game; set
+   `"studio": true` in it to allow `?studio` to open the editor. Standalone Site exports package the engine and the game for any
+   static host.
+
+`build.sh` also writes `files.json` (every file the site serves), which the service worker caches for offline use and the
+exporter packages. It is generated and ignored by git.
+
+## Running the Lua tests
+
+The scripting runtime can be checked against any Lua 5.4+ build: load `core/wick_runtime.lua` after defining `__wick_host`,
+`__wick_slice`, `__wick_elapsed` and `__wick_limits` (see the comments at the top of the file).
 
 ## Versioning
 
