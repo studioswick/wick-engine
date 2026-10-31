@@ -4,7 +4,7 @@
 // (see diagnostic.js), and the user can override any of them.
 
 import { TIERS } from './world.js';
-import { WICK_LIMITS } from './datamodel.js';
+import { WICK_LIMITS, GRAPHICS_FLOORS } from './datamodel.js';
 
 /** Editable limits. min/max bound what the limits dialog accepts. */
 export const LIMIT_DEFS = [
@@ -104,9 +104,10 @@ export class WickGuard {
     const v = this.limits.values;
     const locked = this.quality === 'auto' ? -1 : this.quality;
     const baseline = Math.max(this.world.softwareRenderer ? 2 : 0, this.limits.hardware.tier);
-    const start = keepTier ? Math.max(baseline, this.world.tier) : baseline;
+    const floor = this.floorTier;
+    const start = Math.min(keepTier ? Math.max(baseline, this.world.tier) : baseline, floor);
     this.core.guardLimits(v.degradeFps, v.stopFps, v.hitchSeconds);
-    this.core.guardReset(v.maxBodies, locked, start);
+    this.core.guardReset(v.maxBodies, locked, start, floor);
     this.world.setTier(this.core.guardTier);
     this._skip = 2;
   }
@@ -120,6 +121,9 @@ export class WickGuard {
   }
 
   get tierName() { return TIERS[this.world.tier].name; }
+
+  /** Highest tier index (lowest quality) this project allows, from Lighting.MinGraphics. */
+  get floorTier() { return 3 - GRAPHICS_FLOORS.indexOf(this.world.dm.lighting.props.MinGraphics); }
 
   _heapRatio() {
     const m = performance.memory; // Chromium only
