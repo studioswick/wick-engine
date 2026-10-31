@@ -1,22 +1,41 @@
-// Wick Engine materials: turns a Part's Material, Color and Transparency into a Babylon PBR material.
+// Wick Engine materials: turns a Part's Material, Color, Texture and Transparency into a Babylon material.
 // Metal and Glass get their own material per Part when reflections are on, because each one reads the
 // reflection probe that is currently assigned to it (see reflections.js). Everything else is shared.
+// Tone mapping is applied per material (not by the post-process pipeline) so the Void texture can opt out of it and
+// show exactly its color.
 
-import { surfaceTexture, TEXTURE_TILE } from './library.js';
+import { surfaceTexture, textureTile, libraryTextureName, VOID_TEXTURE } from './library.js';
+import { assetIdOf } from './assets.js';
 
 const B = globalThis.BABYLON;
 
-const TEXTURED = new Set(['Wood', 'Grass']);
 const TEXTURE_SIZE = 512;
+const ASSET_TILE = 4; // world units per repeat when a custom image has to be projected onto a part
 
 export class WickMaterials {
-  constructor(scene) {
+  constructor(scene, assets) {
     this.scene = scene;
+    this.assets = assets;
     this.reflections = null; // set by the world: supplies the reflection texture for a Part
     this.look = { reflect: false, bump: false, aniso: 1 };
     this.shared = new Map();
     this.perPart = new Map(); // instance id -> material
-    this.textures = new Map(); // 'Wood' | 'Grass' -> { color, normal }
+    this.textures = new Map(); // library name -> { color, normal|null }
+    this.imageTextures = new Map(); // asset id -> texture
+    this._raw = null;
+  }
+
+  /** What texture a Part shows: { kind: 'void' | 'lib' | 'asset', ... } or null. */
+  spec(p) {
+    const t = p.Texture;
+    if (t === VOID_TEXTURE) return { kind: 'void' };
+    const lib = libraryTextureName(t);
+    if (lib) return { kind: 'lib', name: lib };
+    const id = assetIdOf(t);
+    if (id && this.assets.has(id) && this.assets.get(id).kind === 'texture') return { kind: 'asset', id };
+    if (!t && p.Material === 'Wood') return { kind: 'lib', name: 'wood' };
+    if (!t && p.Material === 'Grass') return { kind: 'lib', name: 'grass' };
+    return null;
   }
 
   /** Applies a quality tier's look. Returns true when materials must be re-assigned to their meshes. */
@@ -24,12 +43,17 @@ export class WickMaterials {
     const same = ['reflect', 'bump', 'aniso'].every((k) => this.look[k] === look[k]);
     if (same) return false;
     this.look = { ...look };
+    this.disposeAll();
+    for (const t of this.textures.values()) for (const tex of [t.color, t.normal]) if (tex) tex.anisotropicFilteringLevel = look.aniso;
+    for (const tex of this.imageTextures.values()) tex.anisotropicFilteringLevel = look.aniso;
+    return true;
+  }
+
+  disposeAll() {
     for (const m of this.shared.values()) m.dispose();
     for (const m of this.perPart.values()) m.dispose();
     this.shared.clear();
     this.perPart.clear();
-    for (const t of this.textures.values()) for (const tex of [t.color, t.normal]) tex.anisotropicFilteringLevel = look.aniso;
-    return true;
   }
 
   release(id) {
@@ -45,7 +69,8 @@ export class WickMaterials {
 
   forPart(inst) {
     const p = inst.props;
-    const own = this.look.reflect && (p.Material === 'Metal' || p.Material === 'Glass');
+    const isVoid = p.Texture === VOID_TEXTURE;
+    const own = !isVoid && this.look.reflect && (p.Material === 'Metal' || p.Material === 'Glass');
     if (own) {
       let mat = this.perPart.get(inst.id);
       if (!mat) {
@@ -55,11 +80,11 @@ export class WickMaterials {
       }
       return mat;
     }
-    const key = `${p.Material}|${p.Color.map((n) => n.toFixed(3)).join(',')}|${p.Transparency.toFixed(2)}`;
+    const key = `${p.Material}|${p.Color.map((n) => n.toFixed(3)).join(',')}|${p.Transparency.toFixed(2)}|${p.Texture}|${isVoid ? p.TextureColor.join(',') : ''}`;
     let mat = this.shared.get(key);
     if (!mat) {
-      mat = this._build(p, `wick-mat-${this.shared.size}`);
-      if (this.look.reflect) mat.reflectionTexture = this.reflections.sky?.cubeTexture ?? null;
+      mat = isVoid ? this._buildVoid(p, `wick-void-${this.shared.size}`) : this._build(p, `wick-mat-${this.shared.size}`);
+      if (!isVoid && this.look.reflect) mat.reflectionTexture = this.reflections.sky?.cubeTexture ?? null;
       this.shared.set(key, mat);
     }
     return mat;
@@ -75,10 +100,39 @@ export class WickMaterials {
         tex.anisotropicFilteringLevel = this.look.aniso;
         return tex;
       };
-      t = { color: make(color), normal: make(normal) };
+      t = { color: make(color), normal: normal ? make(normal) : null };
       this.textures.set(name, t);
     }
     return t;
+  }
+
+  _image(id) {
+    let tex = this.imageTextures.get(id);
+    if (!tex) {
+      tex = new B.Texture(this.assets.url(id), this.scene, false, true, B.Texture.TRILINEAR_SAMPLINGMODE);
+      tex.wrapU = tex.wrapV = B.Texture.WRAP_ADDRESSMODE;
+      tex.anisotropicFilteringLevel = this.look.aniso;
+      this.imageTextures.set(id, tex);
+    }
+    return tex;
+  }
+
+  /** Unlit and untouched by tone mapping or fog: the part is always exactly TextureColor. */
+  _buildVoid(p, name) {
+    const mat = new B.StandardMaterial(name, this.scene);
+    mat.disableLighting = true;
+    mat.diffuseColor = B.Color3.Black();
+    mat.specularColor = B.Color3.Black();
+    mat.emissiveColor = B.Color3.FromArray(p.TextureColor);
+    mat.fogEnabled = false;
+    if (!this._raw) {
+      this._raw = new B.ImageProcessingConfiguration();
+      this._raw.isEnabled = false;
+    }
+    mat.imageProcessingConfiguration = this._raw;
+    mat.alpha = 1 - p.Transparency;
+    if (mat.alpha < 1) mat.transparencyMode = B.Material.MATERIAL_ALPHABLEND;
+    return mat;
   }
 
   _build(p, name) {
@@ -112,15 +166,20 @@ export class WickMaterials {
         mat.emissiveIntensity = 2.6;
         mat.roughness = 0.5;
         break;
-      case 'Wood':
-      case 'Grass': {
-        const tex = this._surface(p.Material);
-        mat.albedoTexture = tex.color; // Color tints the natural texture; white shows it as is
-        if (this.look.bump) mat.bumpTexture = tex.normal;
-        mat.roughness = p.Material === 'Wood' ? 0.6 : 0.92;
-        break;
-      }
       default:
+    }
+    const spec = this.spec(p);
+    if (spec?.kind === 'lib') {
+      const tex = this._surface(spec.name);
+      mat.albedoTexture = tex.color; // Color tints the natural texture; white shows it as is
+      if (this.look.bump && tex.normal) mat.bumpTexture = tex.normal;
+      if (p.Material === 'Wood') mat.roughness = 0.6;
+      else if (p.Material === 'Grass') mat.roughness = 0.92;
+      else if (p.Material === 'Plastic') mat.roughness = 0.8;
+    } else if (spec?.kind === 'asset') {
+      mat.albedoTexture = this._image(spec.id);
+      const t = mat.albedoTexture;
+      if (this.assets.get(spec.id).mime === 'image/png' || this.assets.get(spec.id).mime === 'image/webp') t.hasAlpha = true;
     }
     mat.environmentIntensity = p.Material === 'Metal' || p.Material === 'Glass' ? 1 : 0.7;
     mat.alpha = alpha;
@@ -130,15 +189,22 @@ export class WickMaterials {
 
   /**
    * Textured parts get UVs projected from the part's real size, so one texture repeat always covers the same
-   * world distance on every face, however the part is scaled. Other materials ignore UVs.
+   * world distance on every face, however the part is scaled. A custom image on a part whose geometry has its own
+   * UVs (imported meshes, the faces of a block) uses those instead. Untextured parts ignore UVs.
    */
   prepareMesh(inst, mesh) {
-    const tile = TEXTURE_TILE[inst.props.Material];
-    if (!tile) return;
+    const spec = this.spec(inst.props);
+    if (!spec || spec.kind === 'void') return;
     const geo = (mesh.metadata.geo ||= {
       pos: mesh.getVerticesData(B.VertexBuffer.PositionKind),
       nrm: mesh.getVerticesData(B.VertexBuffer.NormalKind),
+      uv0: mesh.getVerticesData(B.VertexBuffer.UVKind),
     });
+    if (spec.kind === 'asset' && geo.uv0) {
+      mesh.setVerticesData(B.VertexBuffer.UVKind, geo.uv0, false);
+      return;
+    }
+    const tile = spec.kind === 'lib' ? textureTile(spec.name) : ASSET_TILE;
     const s = inst.props.Shape === 'Ball' ? [inst.props.Size[0], inst.props.Size[0], inst.props.Size[0]] : inst.props.Size;
     const count = geo.pos.length / 3;
     const uv = new Float32Array(count * 2);
