@@ -1,6 +1,6 @@
 ---
-name: wick engine
-description: Build games for Wick Engine as plain text files. Use this when asked to create or edit a Wick project: its object tree (tree.wtree), Lua scripts, UI, assets, lighting and camera, and to run it and read errors.
+name: wick-engine
+description: "Build games for Wick Engine as plain text files. Use this when asked to create or edit a Wick project: its object tree (tree.wtree), Lua scripts, UI, assets, lighting and camera, and to run it and read errors."
 ---
 
 # Wick Engine: how to build a game as text files
