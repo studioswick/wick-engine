@@ -2,13 +2,19 @@
 // The physics world exists only between Play and Stop, so edit mode costs nothing.
 // Surfaces grip, bounce and roll according to their Material (see SURFACES), and moving bodies feel air drag,
 // so nothing slides or rolls forever.
+// The world is stepped here at a fixed rate (see stepper.js), never by the raw frame time, so lag cannot make physics
+// unstable or slow the game down. What is drawn is interpolated between the last two steps.
 
 import { SURFACES } from './datamodel.js';
+import { FixedStepper } from './stepper.js';
 
 const B = globalThis.BABYLON;
 
 /** Parts are built at "stud" scale, so real-world gravity reads as floaty. Workspace.Gravity is multiplied by this. */
 export const GRAVITY_SCALE = 3;
+
+/** Seconds per physics step. Every step is exactly this long, whatever the frame rate. */
+export const PHYSICS_STEP = 1 / 60;
 
 const IMPACT_COOLDOWN_MS = 90; // one sound per pair of parts in this window (a contact reports once per touch point)
 
@@ -24,14 +30,22 @@ export class WickPhysics {
     this.active = false;
     this._lastImpact = new Map();
     this._impactObs = null;
+    this.paused = false;
+    this.dynamic = new Set(); // records of bodies that physics moves, with their last two stepped transforms
+    this.stepper = new FixedStepper({ step: PHYSICS_STEP });
+    this.onSlow = null; // (seconds) the machine could not keep up and some simulated time was given up
   }
 
   get count() { return this.bodies.size; }
 
   start(gravity) {
-    this.plugin = new B.HavokPlugin(true, this.havok);
+    // false: Havok steps by its own fixed time step, not by whatever the last frame took.
+    this.plugin = new B.HavokPlugin(false, this.havok);
+    this.plugin.setTimeStep(PHYSICS_STEP);
     this.scene.enablePhysics(new B.Vector3(0, -gravity * GRAVITY_SCALE, 0), this.plugin);
-    this.scene.physicsEnabled = true;
+    this.scene.physicsEnabled = false; // Babylon must not step it as well: update() does
+    this.paused = false;
+    this.stepper.reset();
     this._impactObs = this.plugin.onCollisionObservable.add((ev) => this._impact(ev));
     this._lastImpact.clear();
     this.active = true;
@@ -40,6 +54,7 @@ export class WickPhysics {
   stop() {
     for (const id of [...this.bodies.keys()]) this.remove(id);
     this.listening.clear();
+    this.dynamic.clear();
     if (this.active) {
       this.plugin.onCollisionObservable.remove(this._impactObs);
       this.scene.disablePhysicsEngine();
@@ -50,12 +65,55 @@ export class WickPhysics {
   }
 
   /** Freezes or resumes the simulation. Bodies keep their velocities across a pause. */
-  setPaused(paused) { this.scene.physicsEnabled = !paused; }
+  setPaused(paused) {
+    this.paused = paused;
+    this.stepper.reset(); // the time spent paused is not lag to be paid back
+  }
+
+  /**
+   * Advances the simulation by dt seconds of real time, in whole fixed steps, then draws the bodies between their
+   * last two stepped positions. Call once per frame, after scripts have run and before rendering.
+   */
+  update(dt) {
+    const engine = this.active && this.scene.getPhysicsEngine();
+    if (!engine || this.paused) return;
+    const run = () => {
+      for (const r of this.dynamic) { r.p0.copyFrom(r.p1); r.q0.copyFrom(r.q1); }
+      this.scene.onBeforePhysicsObservable.notifyObservers(this.scene);
+      if (typeof engine._step === 'function') engine._step(PHYSICS_STEP);
+      else this.plugin.executeStep(PHYSICS_STEP, engine._physicsBodies);
+      this.scene.onAfterPhysicsObservable.notifyObservers(this.scene);
+      for (const r of this.dynamic) { r.p1.copyFrom(r.mesh.position); r.q1.copyFrom(r.mesh.rotationQuaternion); }
+    };
+    const { dropped } = this.stepper.advance(dt, run);
+    if (dropped > 0) this.onSlow?.(dropped);
+    const a = this.stepper.alpha;
+    for (const r of this.dynamic) {
+      B.Vector3.LerpToRef(r.p0, r.p1, a, r.mesh.position);
+      B.Quaternion.SlerpToRef(r.q0, r.q1, a, r.mesh.rotationQuaternion);
+    }
+  }
 
   setGravity(g) { this.scene.getPhysicsEngine()?.setGravity(new B.Vector3(0, -g * GRAVITY_SCALE, 0)); }
 
-  _shape(p) {
+  /** Convex hull of a Mesh part's geometry at its real size. Built from a throwaway mesh so scaling is exact. */
+  _hull(mesh, size) {
+    const pos = mesh.getVerticesData(B.VertexBuffer.PositionKind), idx = mesh.getIndices();
+    const scaled = new Float32Array(pos.length);
+    for (let i = 0; i < pos.length; i += 3) { scaled[i] = pos[i] * size[0]; scaled[i + 1] = pos[i + 1] * size[1]; scaled[i + 2] = pos[i + 2] * size[2]; }
+    const tmp = new B.Mesh('wick-hull-source', this.scene);
+    const vd = new B.VertexData();
+    vd.positions = scaled;
+    vd.indices = idx;
+    vd.applyToMesh(tmp);
+    try { return new B.PhysicsShapeConvexHull(tmp, this.scene); } finally { tmp.dispose(); }
+  }
+
+  _shape(p, mesh) {
     const [sx, sy, sz] = p.Size;
+    if (p.Shape === 'Mesh' && p.CollisionFidelity === 'Hull') {
+      try { return { shape: this._hull(mesh, p.Size), volume: sx * sy * sz * 0.6 }; } catch { /* fall back to the bounding box */ }
+    }
     if (p.Shape === 'Ball') {
       return { shape: new B.PhysicsShapeSphere(B.Vector3.Zero(), sx / 2, this.scene), volume: (Math.PI * sx ** 3) / 6 };
     }
@@ -78,7 +136,7 @@ export class WickPhysics {
     const p = inst.props;
     if (!p.CanCollide) return;
     const surface = SURFACES[p.Material] ?? SURFACES.Plastic;
-    const { shape, volume } = this._shape(p);
+    const { shape, volume } = this._shape(p, mesh);
     const friction = p.Friction * surface.grip;
     shape.material = {
       friction,
@@ -93,12 +151,16 @@ export class WickPhysics {
     const rec = { body, shape, mesh, material: p.Material, mass: 0 };
     if (!p.Anchored) {
       rec.mass = Math.max(0.05, volume * p.Density);
-      body.setMassProperties({ mass: rec.mass });
+      // Zero inertia means infinite: the body slides and jumps but never tips over (characters).
+      body.setMassProperties(p.LockRotation ? { mass: rec.mass, inertia: B.Vector3.ZeroReadOnly } : { mass: rec.mass });
       // Air drag grows as a part gets lighter and smaller. Round parts get rolling resistance, which a rigid-body
       // solver does not model on its own.
       body.setLinearDamping(Math.min(2, 0.06 + 0.06 / (p.Density * Math.cbrt(volume))));
       body.setAngularDamping({ Block: 0.08, Cylinder: 0.15, Ball: 0.18 }[p.Shape] + surface.roll);
       this._listenForImpacts(body);
+      rec.p0 = mesh.position.clone(); rec.p1 = mesh.position.clone();
+      rec.q0 = mesh.rotationQuaternion.clone(); rec.q1 = mesh.rotationQuaternion.clone();
+      this.dynamic.add(rec);
     }
     this.bodies.set(inst.id, rec);
     if (this.listening.has(inst.id)) this._watch(inst.id, rec);
@@ -108,6 +170,7 @@ export class WickPhysics {
     const rec = this.bodies.get(id);
     if (!rec) return;
     this.bodies.delete(id);
+    this.dynamic.delete(rec);
     try { rec.body.dispose(); rec.shape.dispose(); } catch { /* mesh may already be disposed */ }
   }
 
@@ -117,6 +180,10 @@ export class WickPhysics {
     if (!rec) return;
     rec.body.disablePreStep = false;
     this.scene.onAfterPhysicsObservable.addOnce(() => { rec.body.disablePreStep = true; });
+    if (rec.p0) { // the script's value is the truth now: nothing to interpolate from
+      rec.p0.copyFrom(rec.mesh.position); rec.p1.copyFrom(rec.mesh.position);
+      rec.q0.copyFrom(rec.mesh.rotationQuaternion); rec.q1.copyFrom(rec.mesh.rotationQuaternion);
+    }
   }
 
   // ---------------------------------------------------------------- collisions
