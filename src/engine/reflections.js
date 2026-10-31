@@ -56,7 +56,7 @@ export class WickReflections {
     this.tier = t;
     if (t.probes > 0) {
       this.sky = this._probe(t.skySize);
-      this.sky.cubeTexture.renderListPredicate = (m) => m === this.world.sky;
+      this.sky.cubeTexture.renderListPredicate = (m) => m === this.world.skyMesh;
     }
     return true;
   }
@@ -77,7 +77,7 @@ export class WickReflections {
 
   _newSlot() {
     const slot = { probe: this._probe(this.tier.probeSize), target: null, dirty: true, version: -1 };
-    const sky = this.world.sky;
+    const sky = this.world.skyMesh;
     slot.probe.cubeTexture.renderListPredicate = (m) => m === sky || (!!m.metadata?.wickId && m.metadata.wickId !== slot.target);
     this.slots.push(slot);
     return slot;
