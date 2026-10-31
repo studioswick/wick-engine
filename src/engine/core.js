@@ -28,7 +28,7 @@ export class WickCore {
     core._heap = fn('wick_vm_heap_bytes', 'number', []);
     core._fatal = fn('wick_vm_fatal', 'number', []);
     core._gLimits = fn('wick_guard_limits', null, ['number', 'number', 'number']);
-    core._gReset = fn('wick_guard_reset', null, ['number', 'number', 'number']);
+    core._gReset = fn('wick_guard_reset', null, ['number', 'number', 'number', 'number']);
     core._gTick = fn('wick_guard_tick', 'number', ['number', 'number', 'number', 'number', 'number']);
     core._gTier = fn('wick_guard_tier', 'number', []);
     core._gReason = fn('wick_guard_reason', 'number', []);
@@ -59,7 +59,8 @@ export class WickCore {
   get fatal() { return this._fatal() === 1; }
 
   guardLimits(degradeFps, stopFps, hitchSeconds) { this._gLimits(degradeFps, stopFps, hitchSeconds); }
-  guardReset(maxBodies, fixedTier, startTier) { this._gReset(maxBodies, fixedTier, startTier); }
+  /** maxTier: the lowest graphics tier Auto may use (3 = Minimal). */
+  guardReset(maxBodies, fixedTier, startTier, maxTier = 3) { this._gReset(maxBodies, fixedTier, startTier, maxTier); }
   /** 0 nothing, 1 lower the quality tier, 2 stop the game. */
   guardTick(frameMs, scriptMs, heapRatio, bodies, playing) {
     return this._gTick(frameMs, scriptMs, heapRatio, bodies, playing ? 1 : 0);
