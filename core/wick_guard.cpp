@@ -32,6 +32,7 @@ struct Limits {
 
 struct State {
   int tier = 0;
+  int maxTier = kMaxTier;  // lowest quality tier the game may use (a developer's minimum graphics)
   int fixedTier = -1;  // >= 0 when the user locked a quality level
   int maxBodies = 1500;
   int reason = kNoReason;
@@ -61,11 +62,13 @@ WICK_EXPORT void wick_guard_limits(double degradeFps, double stopFps, double hit
 }
 
 // fixedTier: -1 for automatic quality, otherwise the locked tier. startTier is only used in automatic mode.
-WICK_EXPORT void wick_guard_reset(int maxBodies, int fixedTier, int startTier) {
+// maxTier is the lowest tier automatic quality may step down to; being unplayable there stops the game.
+WICK_EXPORT void wick_guard_reset(int maxBodies, int fixedTier, int startTier, int maxTier) {
   g = State{};
   g.maxBodies = maxBodies;
+  g.maxTier = std::clamp(maxTier, 0, kMaxTier);
   g.fixedTier = fixedTier;
-  g.tier = fixedTier >= 0 ? std::min(fixedTier, kMaxTier) : std::clamp(startTier, 0, kMaxTier);
+  g.tier = fixedTier >= 0 ? std::min(fixedTier, kMaxTier) : std::clamp(startTier, 0, g.maxTier);
 }
 
 // Called once per rendered frame. Returns 0 nothing, 1 lower the quality tier, 2 stop the game.
@@ -93,14 +96,14 @@ WICK_EXPORT int wick_guard_tick(double frameMs, double scriptMs, double heapRati
   if (g.scriptSeconds > kScriptSeconds) return stop(kScriptLoad);
 
   // Graphics are the likely cause: drop a tier, then give the new tier time to settle.
-  if (slow && !scriptBound && g.slowSeconds > kSlowSeconds && g.fixedTier < 0 && g.tier < kMaxTier) {
+  if (slow && !scriptBound && g.slowSeconds > kSlowSeconds && g.fixedTier < 0 && g.tier < g.maxTier) {
     g.tier++;
     g.slowSeconds = 0.0;
     g.frameEma = 20.0;
     return kDegrade;
   }
 
-  const bool atFloor = g.fixedTier >= 0 || g.tier >= kMaxTier;
+  const bool atFloor = g.fixedTier >= 0 || g.tier >= g.maxTier;
   const bool critical = playing && atFloor && g.frameEma > L.criticalMs;
   g.criticalSeconds = critical ? g.criticalSeconds + dt : std::max(0.0, g.criticalSeconds - dt);
   if (g.criticalSeconds > kCriticalSeconds) return stop(kLowFps);
