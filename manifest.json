@@ -2,7 +2,7 @@
   "name": "Wick Engine",
   "short_name": "Wick",
   "description": "A browser game engine with a Studio-style editor, Babylon.js rendering, Havok physics and Lua scripting. Works offline.",
-  "start_url": "./",
+  "start_url": "index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
