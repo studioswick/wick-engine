@@ -61,8 +61,17 @@ async function loadGameConfig() {
 }
 
 function registerServiceWorker() {
-  if (!('serviceWorker' in navigator) || !(location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) return;
-  navigator.serviceWorker.register('sw.js').catch((err) => console.warn('Offline support is unavailable:', err));
+  if (!('serviceWorker' in navigator)) return;
+  
+  // Ensure we register relative to the current folder/scope for GitHub Pages
+  const isSecure = location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  if (!isSecure) return;
+
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js', { scope: './' })
+      .then((reg) => console.log('Wick SW registered:', reg.scope))
+      .catch((err) => console.warn('Offline support is unavailable:', err));
+  });
 }
 
 async function boot() {
