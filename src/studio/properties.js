@@ -1,10 +1,11 @@
 // Properties panel: editors are generated from the class schema in datamodel.js.
+// With several objects selected it shows the last one and applies every edit to all selected objects of that class.
 // While a game runs it becomes a read-only live view (positions follow physics).
 
 import { propList } from './../engine/datamodel.js';
 import { h, icon, iconFor } from './ui.js';
 
-const CATEGORY_ORDER = ['Data', 'Appearance', 'Transform', 'Physics', 'Behavior', 'Environment', 'Light', 'Sound', 'Script'];
+const CATEGORY_ORDER = ['Data', 'Appearance', 'Layout', 'Text', 'Image', 'Transform', 'Physics', 'Behavior', 'Environment', 'Sky', 'Wind', 'Graphics', 'Light', 'Camera', 'Sound', 'Script'];
 
 const fmt = (n) => String(Number(Number(n).toFixed(3)));
 const toHex = (c) => `#${c.map((v) => Math.round(Math.min(1, Math.max(0, v)) * 255).toString(16).padStart(2, '0')).join('')}`;
@@ -15,10 +16,9 @@ export class WickProperties {
     this.studio = studio;
     this.dm = studio.dm;
     this.host = host;
-    this._timer = null;
 
     studio.on('selection', () => this.render());
-    this.dm.on('changed', (inst, prop) => { if (inst === studio.selected && !studio.playing) this.refresh(prop); });
+    this.dm.on('changed', (inst, prop) => { if (studio.isSelected(inst) && !studio.playing) this.refresh(prop); });
     this.dm.on('reset', () => this.render());
     // Live values while playing.
     setInterval(() => { if (studio.playing && studio.selected) this.render(); }, 250);
@@ -40,12 +40,14 @@ export class WickProperties {
       this.host.replaceChildren(h('div', { class: 'wk-empty' }, 'Select an object to see its properties.'));
       return;
     }
+    const many = this.studio.selection.length;
     const frag = document.createDocumentFragment();
-    frag.append(h('div', { class: 'wk-prop-head' }, icon(iconFor(inst)), h('span', { class: 'wk-prop-class' }, inst.className)));
+    frag.append(h('div', { class: 'wk-prop-head' }, icon(iconFor(inst)), h('span', { class: 'wk-prop-class' }, inst.className),
+      many > 1 ? h('span', { class: 'wk-muted' }, `${many} selected: edits apply to every ${inst.className}`) : null));
 
     const groups = new Map();
     for (const [name, def] of propList(inst.className)) {
-      if (def.hidden) continue;
+      if (def.hidden || (def.when && !def.when(inst.props))) continue;
       const cat = def.cat || 'Data';
       if (!groups.has(cat)) groups.set(cat, []);
       groups.get(cat).push([name, def]);
@@ -67,7 +69,9 @@ export class WickProperties {
   }
 
   _commit(inst, name, value, revert) {
-    if (!this.studio.setProp(inst, name, value)) revert?.();
+    if (!this.studio.setProp(inst, name, value)) { revert?.(); return; }
+    // Some properties decide which others are shown (Shape, Texture), so redraw once the editor has let go of focus.
+    if (propList(inst.className).some(([, d]) => d.when)) setTimeout(() => this.render(), 0);
   }
 
   _editor(inst, name, def, value, ro) {
@@ -87,12 +91,30 @@ export class WickProperties {
         }, axis));
         return h('div', { class: 'wk-vec' }, inputs);
       }
+      case 'vector2': {
+        const inputs = ['X', 'Y'].map((axis, i) => this._num(value[i], def, ro, () => {
+          const next = inputs.map((el) => Number(el.value));
+          set(next, () => inputs.forEach((el, j) => { el.value = fmt(value[j]); }));
+        }, axis));
+        return h('div', { class: 'wk-vec is-two' }, inputs);
+      }
+      case 'udim2': {
+        // [X scale, X offset, Y scale, Y offset]: scale is a fraction of the parent, offset is in pixels.
+        const tags = ['X', 'X', 'Y', 'Y'], kinds = ['scale', 'px', 'scale', 'px'];
+        const inputs = value.map((v, i) => this._num(v, { step: i % 2 ? 1 : 0.05 }, ro, () => {
+          const next = inputs.map((el) => Number(el.value));
+          set(next, () => inputs.forEach((el, j) => { el.value = fmt(value[j]); }));
+        }, tags[i], `${tags[i]} ${kinds[i]}`));
+        return h('div', { class: 'wk-udim' },
+          h('span', { class: 'wk-udim-tag' }, 'X'), inputs[0], inputs[1], h('span', { class: 'wk-udim-tag' }, 'Y'), inputs[2], inputs[3]);
+      }
       case 'color':
         return h('input', { type: 'color', class: 'wk-color', value: toHex(value), disabled: ro, onchange: (e) => set(fromHex(e.target.value), () => { e.target.value = toHex(value); }) });
       case 'source':
         return h('button', { class: 'wk-btn', onclick: () => this.studio.openScript(inst) }, 'Open in editor');
       default: {
-        const listId = def.suggest ? `wk-list-${name}` : null;
+        const suggestions = typeof def.suggest === 'function' ? def.suggest(this.dm) : def.suggest;
+        const listId = suggestions ? `wk-list-${name}` : null;
         const input = h('input', {
           class: 'wk-input', type: 'text', value, disabled: ro, spellcheck: 'false', list: listId,
           onkeydown: (e) => { e.stopPropagation(); if (e.key === 'Enter') e.target.blur(); },
@@ -101,18 +123,17 @@ export class WickProperties {
             else set(e.target.value, () => { e.target.value = value; });
           },
         });
-        return def.suggest ? [input, h('datalist', { id: listId }, def.suggest.map((s) => h('option', { value: s })))] : input;
+        return suggestions ? [input, h('datalist', { id: listId }, suggestions.map((s) => h('option', { value: s })))] : input;
       }
     }
   }
 
-  _num(value, def, ro, onchange, axis) {
-    const input = h('input', {
+  _num(value, def, ro, onchange, axis, title) {
+    return h('input', {
       class: `wk-input wk-num${axis ? ` axis-${axis}` : ''}`, type: 'number', value: fmt(value), step: def.step ?? 'any', disabled: ro,
-      title: axis || '',
+      title: title || axis || '',
       onkeydown: (e) => { e.stopPropagation(); if (e.key === 'Enter') e.target.blur(); },
       onchange: (e) => onchange(Number(e.target.value), () => { e.target.value = fmt(value); }),
     });
-    return input;
   }
 }
