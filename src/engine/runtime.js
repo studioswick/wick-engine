@@ -7,6 +7,7 @@ import { propDef } from './datamodel.js';
 
 const SEP = '\x1f';
 const MAX_TOUCH_EVENTS_PER_FRAME = 64;
+const MAX_DT = 1;
 const MAX_LOG_PER_SECOND = 300;
 
 const KEY_NAMES = { ShiftLeft: 'LeftShift', ShiftRight: 'RightShift', ControlLeft: 'LeftControl', ControlRight: 'RightControl', AltLeft: 'LeftAlt', AltRight: 'RightAlt', ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right' };
@@ -25,16 +26,18 @@ function encode(def, v) {
     case 'number': return `n${v}`;
     case 'boolean': return v ? 'b1' : 'b0';
     case 'vector3': return `v${v.join(',')}`;
+    case 'vector2': return `w${v.join(',')}`;
+    case 'udim2': return `u${v.join(',')}`;
     case 'color': return `c${v.join(',')}`;
     default: return `s${clean(v)}`;
   }
 }
 
-const TAG_FOR_TYPE = { number: 'n', boolean: 'b', string: 's', source: 's', enum: 's', vector3: 'v', color: 'c' };
+const TAG_FOR_TYPE = { number: 'n', boolean: 'b', string: 's', source: 's', enum: 's', vector3: 'v', vector2: 'w', udim2: 'u', color: 'c' };
 
 export class WickRuntime {
-  constructor({ dm, world, physics, audio, core, guard, limits, log }) {
-    Object.assign(this, { dm, world, physics, audio, core, guard, limits, log });
+  constructor({ dm, world, physics, audio, core, guard, limits, log, gui }) {
+    Object.assign(this, { dm, world, physics, audio, core, guard, limits, log, gui });
     this.playing = false;
     this.paused = false;
     this.autoPaused = false; // paused because the tab was hidden, so it resumes when the tab returns
@@ -45,9 +48,14 @@ export class WickRuntime {
     this.onPauseChange = null; // (paused) => void
     this._offs = [];
     this._down = new Map(); // input name -> device ('Keyboard' | 'Mouse') for every key or button held right now
+    this._mouse = { dx: 0, dy: 0, wheel: 0 }; // movement and wheel steps gathered since the last frame
     physics.onTouched = (id, other) => {
-      if (this.events.length < 1024) this.events.push(['touched', [`i${id}`, `i${other}`]]);
+      if (this.events.length < 1024) this.events.push(['signal', [`i${id}`, 'sTouched', `i${other}`]]);
     };
+    // Right-drag movement and wheel steps reach scripts as UserInputService.InputChanged.
+    world.onMouseMove = (dx, dy) => { if (this.playing && !this.paused) { this._mouse.dx += dx; this._mouse.dy += dy; } };
+    world.onWheel = (step) => { if (this.playing && !this.paused) this._mouse.wheel += step; };
+    if (gui) gui.onSignal = (id, name, ...args) => { if (this.playing && !this.paused && this.events.length < 1024) this.events.push(['signal', [`i${id}`, `s${name}`, ...args]]); };
     physics.onImpact = (a, b, strength, at, mass) => { if (this.playing) this.audio.impact(a, b, strength, at, mass); };
     // While paused the guard only watches graphics: nothing is running that could hang or run away.
     guard.context = () => ({ playing: this.playing && !this.paused, scriptMs: this.scriptMs, bodies: physics.count });
@@ -86,6 +94,9 @@ export class WickRuntime {
         dm.on('changed', (inst, prop) => this._changed(inst, prop)),
         dm.on('removed', (inst) => { if (inst.className === 'Sound') this.audio.remove(inst.id); }),
       );
+      this.gui?.setPlaying(true);
+      this._lastTick = performance.now();
+      physics.onSlow = (s) => this.log('warn', `The device could not keep up with the physics, so ${s.toFixed(2)}s of simulation was skipped.`);
       this._tickObs = world.scene.onBeforeRenderObservable.add(() => this._tick());
       this.guard.reset(true);
       this.onStateChange?.(true, null);
@@ -93,8 +104,9 @@ export class WickRuntime {
       await this.audio.start();
       for (const s of dm.descendants(dm.root)) if (s.className === 'Sound' && dm.isRunnable(s)) this._addSound(s);
 
-      for (const s of [...dm.descendants(dm.scripts), ...dm.descendants(dm.workspace)]) {
-        if (s.className === 'Script' && !s.props.Disabled) core.run(s.name, s.props.Source);
+      // Each script starts with `local script = ...` on its own first line, so error line numbers stay correct.
+      for (const s of [...dm.descendants(dm.scripts), ...dm.descendants(dm.workspace), ...dm.descendants(dm.gui)]) {
+        if (s.className === 'Script' && !s.props.Disabled) core.run(s.name, `local script = __wick_self(${s.id}) ${s.props.Source}`);
       }
     } catch (err) {
       this.log('error', `Could not start the game: ${err.message || err}`);
@@ -114,6 +126,7 @@ export class WickRuntime {
     this._offs.forEach((off) => off());
     this._offs = [];
     dm.liveRead = null;
+    this.gui?.setPlaying(false);
     this.core.close();
     this.audio.dispose();
     this.physics.stop();
@@ -130,6 +143,7 @@ export class WickRuntime {
 
   _setPaused(paused, auto = false) {
     this.paused = paused;
+    this._lastTick = performance.now(); // a pause (or the first frame after one) is not lag
     this.autoPaused = paused && auto;
     this.world.paused = paused;
     this.onPauseChange?.(paused);
@@ -158,10 +172,14 @@ export class WickRuntime {
   _tick() {
     if (!this.playing || this.paused) return;
     const t0 = performance.now();
-    const dt = Math.min(this.world.engine.getDeltaTime() / 1000, 0.1);
+    // Real elapsed time, so lag makes motion choppier but never slower. (Capped at a second: a stalled tab is not game time.)
+    const dt = Math.min(Math.max((t0 - this._lastTick) / 1000, 0), MAX_DT);
+    this._lastTick = t0;
     this._flushEvents();
     const rc = this.core.step(dt);
     this.scriptMs = performance.now() - t0;
+    this.physics.update(dt); // scripts first, so what they set is simulated this frame
+    this.world.driveCamera(); // after everything moved, so a CameraPoint never trails by a frame
     if (rc === 2 || this.core.fatal) {
       this.log('error', 'Script memory limit reached. The game was stopped.');
       // Stopping rebuilds the scene, so wait until the current frame has finished rendering.
@@ -171,8 +189,10 @@ export class WickRuntime {
 
   _flushEvents() {
     let touches = 0;
+    const m = this._mouse;
+    if (m.dx || m.dy || m.wheel) { this.events.push(['mouse', [`n${m.dx}`, `n${m.dy}`, `n${m.wheel}`]]); m.dx = m.dy = m.wheel = 0; }
     for (const [name, items] of this.events.splice(0)) {
-      if (name === 'touched' && ++touches > MAX_TOUCH_EVENTS_PER_FRAME) continue;
+      if (name === 'signal' && items[1] === 'sTouched' && ++touches > MAX_TOUCH_EVENTS_PER_FRAME) continue;
       this.core.event(name, items.join(SEP));
     }
   }
@@ -214,7 +234,7 @@ export class WickRuntime {
     const { physics } = this;
     if (prop === 'Position' || prop === 'Rotation') physics.teleport(inst.id);
     else if (prop === 'Velocity') physics.setVelocity(inst.id, inst.props.Velocity);
-    else if (['Size', 'Anchored', 'CanCollide', 'Density', 'Bounciness', 'Friction', 'Material'].includes(prop)) physics.add(inst, mesh);
+    else if (['Size', 'Anchored', 'CanCollide', 'LockRotation', 'CollisionFidelity', 'Density', 'Bounciness', 'Friction', 'Material'].includes(prop)) physics.add(inst, mesh);
   }
 
   _changed(inst, prop) {
@@ -243,7 +263,7 @@ export class WickRuntime {
       case 'b': return body === '1';
       case 'n': return Number(body);
       case 's': return body;
-      case 'v': case 'c': return body.split(',').map(Number);
+      case 'v': case 'c': case 'w': case 'u': return body.split(',').map(Number);
       case 'i': return this._inst(Number(body));
       default: throw new Error('unreadable value from script');
     }
@@ -251,7 +271,7 @@ export class WickRuntime {
 
   _decodeFor(def, prop, s) {
     if (s[0] !== TAG_FOR_TYPE[def.type]) {
-      const names = { number: 'a number', boolean: 'a boolean', string: 'a string', source: 'a string', enum: 'a string', vector3: 'a Vector3', color: 'a Color3' };
+      const names = { number: 'a number', boolean: 'a boolean', string: 'a string', source: 'a string', enum: 'a string', vector3: 'a Vector3', vector2: 'a Vector2', udim2: 'a UDim2', color: 'a Color3' };
       throw new Error(`${prop} expects ${names[def.type]}`);
     }
     return this._decode(s);
@@ -266,10 +286,13 @@ export class WickRuntime {
         case 'set': return this._set(this._inst(id), a, b);
         case 'new': return this._new(a, b);
         case 'call': return this._call(this._inst(id), a, b);
-        case 'listen':
-          if (a !== 'Touched' || this._inst(id).className !== 'Part') throw new Error(`${a} is not a valid event`);
-          this.physics.listen(id);
+        case 'listen': {
+          const inst = this._inst(id);
+          if (a === 'Touched' && inst.className === 'Part') this.physics.listen(id);
+          else if (a !== 'Touched' && this.gui?.listen(inst, a)) { /* a UI event */ }
+          else throw new Error(`${a} is not a valid event of ${inst.className}`);
           return '';
+        }
         case 'camget': return this._camera(a);
         default: throw new Error(`unknown host call "${op}"`);
       }
@@ -336,6 +359,17 @@ export class WickRuntime {
       }
       case 'IsA': return inst.isA(String(args[0])) ? 'b1' : 'b0';
       case 'GetFullName': return `s${clean(dm.fullName(inst))}`;
+      case 'Raycast': {
+        needs('Workspace');
+        if (!Array.isArray(args[0]) || !Array.isArray(args[1])) throw new Error('Raycast expects an origin and a direction (Vector3)');
+        const hit = this.world.raycast(args[0], args[1], args[2]?.id ?? null);
+        if (!hit) return 'z';
+        return `L${[`i${hit.id}`, `v${hit.point.join(',')}`, `v${hit.normal.join(',')}`, `n${hit.distance}`].join(SEP)}`;
+      }
+      case 'CaptureFocus': case 'ReleaseFocus':
+        if (inst.className !== 'TextBox') throw new Error(`${method} is not a valid method of ${inst.className}`);
+        this.gui?.focus(inst, method === 'CaptureFocus');
+        return 'z';
       case 'ApplyImpulse':
         needs('Part');
         if (!Array.isArray(args[0])) throw new Error('ApplyImpulse expects a Vector3');
@@ -358,6 +392,7 @@ export class WickRuntime {
     const c = this.world.cameraInfo();
     if (prop === 'Position') return `v${c.position.join(',')}`;
     if (prop === 'LookVector') return `v${c.look.join(',')}`;
+    if (prop === 'FieldOfView') return `n${c.fov}`;
     throw new Error(`${prop} is not a valid member of Camera`);
   }
 }
