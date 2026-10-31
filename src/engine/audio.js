@@ -5,6 +5,7 @@
 
 import { SURFACES } from './datamodel.js';
 import { librarySamples, librarySoundName, SOUND_RATE, WICK_SOUNDS, soundId } from './library.js';
+import { assetIdOf } from './assets.js';
 
 const B = globalThis.BABYLON;
 
@@ -14,7 +15,7 @@ const IMPACT_RANGE = 90; // units beyond which impacts are not worth a voice
 const IMPACT_MIN_SPEED = 1.5; // quieter contacts than this (units per second) make no sound
 const IMPACT_FULL_SPEED = 26; // contacts at this speed or above are full volume
 
-function wavUrl(samples, rate) {
+export function wavUrl(samples, rate) {
   const buf = new ArrayBuffer(44 + samples.length * 2);
   const v = new DataView(buf);
   const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
@@ -133,8 +134,14 @@ export class WickAudio {
       if (!this.urls.has(name)) this.urls.set(name, wavUrl(librarySamples(name), SOUND_RATE));
       return this.urls.get(name);
     }
+    const asset = assetIdOf(id);
+    if (asset) {
+      const url = this.world.dm.assets.get(asset)?.kind === 'sound' ? this.world.dm.assets.url(asset) : null;
+      if (!url) throw new Error(`SoundId ${id} is not an imported sound in the Library`);
+      return url;
+    }
     if (/^https?:\/\//i.test(id)) return id;
-    throw new Error(`SoundId must be a Wick library sound (${WICK_SOUNDS.map(soundId).join(', ')}) or an http(s) URL`);
+    throw new Error(`SoundId must be a Wick library sound (${WICK_SOUNDS.map(soundId).join(', ')}), an asset://<id> from the Library, or an http(s) URL`);
   }
 
   _spatial(p) {
