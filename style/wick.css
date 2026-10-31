@@ -54,7 +54,8 @@ img, svg { -webkit-user-drag: none; }
 
 .wk-menubar { grid-column: 1 / -1; display: flex; align-items: center; background: var(--panel-2); border-bottom: 1px solid var(--border); padding: 0 8px; }
 .wk-toolbar { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; background: var(--panel); border-bottom: 1px solid var(--border); padding: 0 10px; }
-.wk-center { grid-column: 1; grid-row: 3; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.wk-center { grid-column: 1; grid-row: 3; display: flex; flex-direction: row; min-width: 0; min-height: 0; }
+.wk-viewcol { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
 .wk-splitter.is-v { grid-column: 2; grid-row: 3; cursor: col-resize; }
 .wk-dock { grid-column: 3; grid-row: 3; display: flex; flex-direction: column; min-height: 0; background: var(--panel); }
 .wk-splitter.is-h { grid-column: 1 / -1; grid-row: 4; cursor: row-resize; }
@@ -211,3 +212,99 @@ img, svg { -webkit-user-drag: none; }
 .wk-busy { height: 4px; margin-top: 12px; border-radius: 2px; background: var(--raised); overflow: hidden; }
 .wk-busy-bar { width: 35%; height: 100%; background: var(--accent); animation: wk-busy 1.1s ease-in-out infinite; }
 @keyframes wk-busy { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+
+/* ================= p0.3.0 ================= */
+[hidden] { display: none !important; }
+
+/* ---- snapping box and UI chip in the viewport ---- */
+.wk-snap { position: absolute; right: 12px; bottom: 12px; z-index: 10; display: flex; gap: 8px; align-items: center; padding: 6px 10px; background: rgba(20, 23, 31, 0.92); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4); }
+.wk-snap .wk-num { width: 64px; }
+.wk-snap-label { font-weight: 600; }
+.wk-ui-chip { position: absolute; left: 12px; top: 12px; z-index: 10; background: rgba(20, 23, 31, 0.85); }
+
+/* ---- properties: new editors ---- */
+.wk-prop-head .wk-muted { font-size: 10.5px; margin-left: auto; }
+.wk-vec.is-two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.wk-udim { display: grid; grid-template-columns: 12px minmax(0, 1fr) minmax(0, 1fr); gap: 3px; align-items: center; }
+.wk-udim-tag { color: var(--muted); font-size: 10px; text-align: center; }
+
+/* ---- user interface layer (rendered by engine/gui.js) ---- */
+.wk-gui-layer { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 5; }
+.wk-gui-layer.is-hidden { display: none; }
+.wk-gui-screen { position: absolute; inset: 0; pointer-events: none; }
+.wk-gui, .wk-gui * { box-sizing: border-box; }
+.wk-gui { pointer-events: none; color: #fff; user-select: none; -webkit-user-select: none; }
+.wk-gui-content { position: absolute; pointer-events: none; }
+.wk-gui-canvas { position: relative; }
+.wk-gui-text { position: absolute; inset: 0; display: flex; overflow: hidden; pointer-events: none; line-height: 1.2; }
+.wk-gui-input { position: absolute; inset: 0; width: 100%; height: 100%; padding: 6px 8px; background: transparent; border: 0; outline: 0; resize: none; font: inherit; line-height: 1.3; overflow: hidden; user-select: text; -webkit-user-select: text; }
+.wk-gui-img, .wk-gui-tint { position: absolute; inset: 0; background-repeat: no-repeat; background-position: center; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; -webkit-mask-position: center; mask-position: center; pointer-events: none; }
+.wk-gui-tint { mix-blend-mode: multiply; }
+.wk-auto { cursor: pointer; }
+.wk-auto:hover { filter: brightness(1.12); }
+.wk-auto.is-pressed { filter: brightness(0.82); }
+.wk-gui-overlay { position: absolute; inset: 0; pointer-events: none; }
+.wk-gui-sel { position: absolute; outline: 1px solid var(--accent); pointer-events: none; }
+.wk-gui-handle { position: absolute; width: 9px; height: 9px; margin: -5px 0 0 -5px; background: #fff; border: 1px solid var(--accent); pointer-events: auto; }
+.wk-gui-layer.is-editing .wk-gui { cursor: move; }
+
+/* ---- library dialog ---- */
+.wk-lib-bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.wk-lib-opt { display: flex; gap: 6px; align-items: center; }
+.wk-lib-hint { flex-basis: 100%; }
+.wk-lib-body { max-height: 50vh; overflow: auto; padding-right: 4px; }
+.wk-lib-row { display: flex; align-items: center; gap: 12px; padding: 6px 4px; border-top: 1px solid var(--border); }
+.wk-lib-thumb { width: 48px; height: 48px; flex: none; border-radius: 6px; object-fit: cover; background: #10131a; display: grid; place-items: center; color: var(--muted); font-weight: 700; font-size: 11px; image-rendering: auto; }
+.wk-lib-void { background: #000; box-shadow: inset 0 0 0 1px var(--border); }
+.wk-lib-text { flex: 1; min-width: 0; }
+.wk-lib-name { font-weight: 600; }
+.wk-lib-text .wk-muted { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.wk-lib-actions { display: flex; gap: 6px; flex: none; }
+.wk-lib-section { color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; margin: 12px 0 2px; }
+.wk-lib > .wk-muted { margin-top: 8px; font-size: 11px; }
+
+/* ---- templates and export ---- */
+.wk-templates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 10px 0; }
+.wk-template { text-align: left; padding: 10px 12px; border: 1px solid #333b50; border-radius: 8px; background: var(--raised); cursor: pointer; }
+.wk-template:hover, .wk-template.is-active { border-color: var(--accent); }
+.wk-template.is-active { background: var(--accent-soft); }
+.wk-template-name { font-weight: 700; margin-bottom: 2px; }
+.wk-skill { white-space: pre-wrap; font: 11.5px/1.5 var(--mono); background: #10131a; padding: 10px; border-radius: 6px; max-height: 46vh; overflow: auto; margin: 0; }
+.wk-row-actions { display: flex; gap: 8px; margin: 8px 0; }
+
+/* ---- text-only interface ---- */
+.wk-text { display: none; order: -1; flex: 0 0 min(60%, 980px); min-width: 0; flex-direction: column; background: var(--panel-2); border-right: 1px solid var(--border); }
+.is-text .wk-text { display: flex; }
+.wk-app.is-text { grid-template-columns: 1fr 0 0; }
+.is-text .wk-dock, .is-text .wk-splitter.is-v, .is-text .wk-tabs, .is-text .wk-edit-only, .is-text .wk-snap, .is-text .wk-ui-chip { display: none !important; }
+.wk-text-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.wk-text-bar .wk-muted { font-size: 11px; max-width: 40ch; }
+.wk-text-body { flex: 1; display: flex; min-height: 0; }
+.wk-text-side { width: 230px; flex: none; display: flex; flex-direction: column; border-right: 1px solid var(--border); min-height: 0; }
+.wk-files { flex: 1; overflow: auto; padding: 4px 0; }
+.wk-file { padding: 3px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; font: 12px var(--mono); }
+.wk-file:hover { background: var(--raised); }
+.wk-file.is-active { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+.wk-file.is-dirty::after { content: " \2022"; color: var(--accent); }
+.wk-text-main { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+.wk-text-path { display: flex; justify-content: space-between; padding: 4px 10px; font: 12px var(--mono); color: var(--muted); border-bottom: 1px solid var(--border); }
+.wk-text-editor { flex: 1; min-height: 0; }
+.wk-text-preview { flex: 1; padding: 12px; overflow: auto; }
+.wk-text-img { max-width: 100%; max-height: 320px; image-rendering: pixelated; background: #10131a; }
+.wk-problems { max-height: 32%; overflow: auto; border-top: 1px solid var(--border); flex: none; }
+.wk-problem { padding: 2px 10px; font: 11.5px var(--mono); cursor: pointer; white-space: pre-wrap; }
+.wk-problem:hover { background: var(--raised); }
+.wk-problem.is-error { color: #ff8a80; }
+.wk-problem.is-warn { color: #f0c05a; }
+
+/* ---- player (exported games) ---- */
+.wk-player { position: fixed; inset: 0; background: #000; overflow: hidden; }
+.wk-player-stage { position: absolute; inset: 0; }
+.wk-player-overlay { position: absolute; inset: 0; z-index: 20; display: grid; place-content: center; justify-items: center; gap: 16px; text-align: center; padding: 24px; background: rgba(8, 10, 14, 0.84); }
+.wk-player-title { color: var(--accent); font-size: 26px; font-weight: 800; letter-spacing: 0.12em; }
+.wk-player-text { max-width: 520px; color: var(--muted); }
+.wk-player-play { padding: 12px 40px; border-radius: 8px; background: var(--accent); color: #1a1205; font-size: 16px; font-weight: 700; cursor: pointer; }
+.wk-player-play:disabled { opacity: 0.5; }
+.wk-player-bar { position: absolute; top: 10px; right: 10px; z-index: 15; display: flex; gap: 6px; }
+.wk-player-btn { padding: 5px 12px; border-radius: 6px; background: rgba(20, 23, 31, 0.72); border: 1px solid var(--border); color: var(--text); cursor: pointer; }
+.wk-player-btn:hover { border-color: var(--accent); }
