@@ -1,35 +1,48 @@
 // Wick Studio shell: builds the window layout (menus, toolbar, viewport, docks, output, status bar),
 // creates every engine system and wires them together.
- 
+
 import { WickDataModel } from '../engine/datamodel.js';
-import { WickWorld, TIERS } from '../engine/world.js';
+import { WickWorld, TIERS, DEFAULT_SNAP } from '../engine/world.js';
 import { WickPhysics } from '../engine/physics.js';
 import { WickAudio } from '../engine/audio.js';
 import { WickGuard, WickLimits } from '../engine/guard.js';
 import { runDiagnostic, RATINGS } from '../engine/diagnostic.js';
 import { WickRuntime } from '../engine/runtime.js';
+import { WickGui } from '../engine/gui.js';
 import { WickProject, loadSettings, saveSettings } from '../project/project.js';
+import { showExportDialog } from '../project/exporter.js';
 import { WickStudio } from './studio.js';
-import { WickExplorer } from './explorer.js';
+import { WickExplorer, insertItems } from './explorer.js';
 import { WickProperties } from './properties.js';
 import { WickScriptEditor } from './scripteditor.js';
-import { showHelp, showAbout, showLimitsDialog, busyDialog } from './dialogs.js';
+import { WickTextMode } from './textmode.js';
+import { showLibrary, importFiles, saveSelectionAsBundle } from './library.js';
+import { showHelp, showAbout, showLimitsDialog, busyDialog, showSkill, showTextModeIntro } from './dialogs.js';
 import { h, icon, showMenu, closeMenus, isMenuOpen, modal, toast, installAppFeel } from './ui.js';
- 
+
 const MAX_OUTPUT_LINES = 600;
 const isTyping = (t) => !!t?.closest?.('input, textarea, select, [contenteditable="true"]');
- 
-export function startStudio({ root, havok, core }) {
+const SNAP_TOOLS = { move: ['Move', 'studs'], rotate: ['Rotate', 'degrees'], scale: ['Scale', 'studs'] };
+
+export async function startStudio({ root, havok, core, assets }) {
   const settings = loadSettings();
   const limits = new WickLimits(); // hardware-based defaults plus the user's overrides
   limits.load(settings);
- 
+
   // ---------------------------------------------------------------- layout
   const canvas = h('canvas', { class: 'wk-canvas', tabindex: '0' });
   const playBadge = h('div', { class: 'wk-play-badge' }, 'PLAYING  ·  right mouse drag to look  ·  W A S D Q E to fly');
-  const viewportPane = h('div', { class: 'wk-pane is-active wk-viewport' }, canvas, playBadge);
+  const snapLabel = h('span', { class: 'wk-snap-label' });
+  const snapInput = h('input', { class: 'wk-input wk-num', type: 'number', min: 0, step: 'any', onkeydown: (e) => { e.stopPropagation(); if (e.key === 'Enter') e.target.blur(); } });
+  const snapUnit = h('span', { class: 'wk-muted' });
+  const snapBox = h('div', { class: 'wk-snap', title: 'Snap increment. 0 turns snapping off.' }, snapLabel, snapInput, snapUnit);
+  snapBox.hidden = true;
+  const uiChip = h('button', { class: 'wk-chip wk-ui-chip', title: 'Show or hide the user interface in the viewport' }, 'UI: on');
+  const viewportPane = h('div', { class: 'wk-pane is-active wk-viewport' }, canvas, playBadge, snapBox, uiChip);
   const panesEl = h('div', { class: 'wk-panes' }, viewportPane);
   const tabsEl = h('div', { class: 'wk-tabs' });
+  const viewCol = h('div', { class: 'wk-viewcol' }, tabsEl, panesEl);
+  const center = h('div', { class: 'wk-center' }, viewCol);
   const explorerEl = h('div', { class: 'wk-tree' });
   const propsEl = h('div', { class: 'wk-props' });
   const outputBody = h('div', { class: 'wk-output-body is-selectable' });
@@ -39,7 +52,7 @@ export function startStudio({ root, havok, core }) {
   const statLua = h('span', {});
   const statQuality = h('span', { class: 'wk-stat-quality' });
   const titleBtn = h('button', { class: 'wk-title', title: 'Rename project' });
- 
+
   const mkBtn = (cls, title, content, onclick) => h('button', { class: cls, title, onclick }, content);
   const toolBtns = {};
   const tool = (id, label, key) => {
@@ -47,23 +60,28 @@ export function startStudio({ root, havok, core }) {
     return toolBtns[id];
   };
   const insertBtn = (what, ic, label) => mkBtn('wk-tool is-icon', `Insert ${label}`, icon(ic), () => studio.insert(what));
+  const uiInsertBtn = mkBtn('wk-tool is-icon', 'Insert UI', icon('ui'), () => {
+    const r = uiInsertBtn.getBoundingClientRect();
+    showMenu(insertItems(studio).find((i) => i.label === 'UI').submenu, r.left, r.bottom);
+  });
+  uiInsertBtn.dataset.menuAnchor = '';
   const playBtn = mkBtn('wk-play', 'Run the game', [icon('play'), h('span', {}, 'Play')], () => togglePlay());
   const pauseIcon = h('span', { class: 'wk-btn-icon' }, icon('pause'));
   const pauseLabel = h('span', {}, 'Pause');
   const pauseBtn = mkBtn('wk-pause', 'Pause the game', [pauseIcon, pauseLabel], () => togglePause());
   const stopBtn = mkBtn('wk-stop', 'Stop the game', [icon('stop'), h('span', {}, 'Stop')], () => runtime.stop());
   const qualityBtn = h('button', { class: 'wk-chip', 'data-menu-anchor': '', title: 'Graphics quality' }, statQuality);
- 
+
   const menubar = h('div', { class: 'wk-menubar' }, h('div', { class: 'wk-logo' }, 'WICK'));
   const toolbar = h('div', { class: 'wk-toolbar' },
-    h('div', { class: 'wk-group' }, tool('select', 'Select', '1'), tool('move', 'Move', '2'), tool('rotate', 'Rotate', '3'), tool('scale', 'Scale', '4')),
-    h('div', { class: 'wk-group' },
-      insertBtn('Block', 'block', 'Block'), insertBtn('Ball', 'ball', 'Ball'), insertBtn('Cylinder', 'cylinder', 'Cylinder'),
+    h('div', { class: 'wk-group wk-edit-only' }, tool('select', 'Select', '1'), tool('move', 'Move', '2'), tool('rotate', 'Rotate', '3'), tool('scale', 'Scale', '4')),
+    h('div', { class: 'wk-group wk-edit-only' },
+      insertBtn('Block', 'block', 'Block'), insertBtn('Ball', 'ball', 'Ball'), insertBtn('Cylinder', 'cylinder', 'Cylinder'), insertBtn('Model', 'model', 'Model'),
       insertBtn('Folder', 'folder', 'Folder'), insertBtn('Script', 'script', 'Script'), insertBtn('Sound', 'sound', 'Sound'),
-      insertBtn('PointLight', 'light', 'PointLight')),
+      insertBtn('PointLight', 'light', 'PointLight'), insertBtn('CameraPoint', 'camera', 'CameraPoint (one per project, on a Part)'), uiInsertBtn),
     h('div', { class: 'wk-group' }, playBtn, pauseBtn, stopBtn),
     h('div', { class: 'wk-spacer' }), qualityBtn);
- 
+
   const dock = h('div', { class: 'wk-dock' },
     h('div', { class: 'wk-panel wk-panel-explorer' }, h('div', { class: 'wk-panel-head' }, 'Explorer'), explorerEl),
     h('div', { class: 'wk-panel wk-panel-props' }, h('div', { class: 'wk-panel-head' }, 'Properties'), propsEl));
@@ -71,16 +89,16 @@ export function startStudio({ root, havok, core }) {
   const hSplit = h('div', { class: 'wk-splitter is-h' });
   const output = h('div', { class: 'wk-output' },
     h('div', { class: 'wk-panel-head' }, 'Output', h('button', { class: 'wk-link', onclick: () => outputBody.replaceChildren() }, 'Clear')), outputBody);
- 
+
   const app = h('div', { class: 'wk-app' },
-    menubar, toolbar,
-    h('div', { class: 'wk-center' }, tabsEl, panesEl), vSplit, dock, hSplit, output,
+    menubar, toolbar, center, vSplit, dock, hSplit, output,
     h('div', { class: 'wk-status' }, statusText, h('div', { class: 'wk-spacer' }), statLua, statParts, statFps),
     h('div', { class: 'wk-small-screen' }, 'Wick Engine Studio needs a larger window. Please use a desktop browser.'));
   root.replaceChildren(app);
- 
+
   // ---------------------------------------------------------------- output panel
   const pending = [];
+  let textMode = null;
   const flushOutput = () => {
     const stick = outputBody.scrollTop + outputBody.clientHeight >= outputBody.scrollHeight - 24;
     outputBody.append(...pending.splice(0, 120).map(([level, text]) => h('div', { class: `wk-line is-${level}` }, text)));
@@ -91,23 +109,27 @@ export function startStudio({ root, havok, core }) {
   const log = (level, text) => {
     if (pending.push([level, text]) === 1) requestAnimationFrame(flushOutput);
     if (pending.length > 2000) pending.splice(0, pending.length - 1000); // never let a log flood grow without bound
+    textMode?.record(level, text);
   };
   const status = (text) => { statusText.textContent = text; };
- 
+
   // ---------------------------------------------------------------- engine systems
-  const dm = new WickDataModel();
+  const dm = new WickDataModel(assets);
   const world = new WickWorld(canvas, dm);
+  world.onWarn = (t) => log('warn', t);
+  world.setSnap({ ...DEFAULT_SNAP, ...(settings.snap ?? {}) });
   const physics = new WickPhysics(world.scene, havok);
   const audio = new WickAudio(world, log);
   const guard = new WickGuard(core, world, limits);
-  const runtime = new WickRuntime({ dm, world, physics, audio, core, guard, limits, log });
-  const studio = new WickStudio({ dm, world, runtime, guard, log, toast });
+  const gui = new WickGui(dm, viewportPane);
+  const runtime = new WickRuntime({ dm, world, physics, audio, core, guard, limits, log, gui });
+  const studio = new WickStudio({ dm, world, runtime, guard, gui, log, toast });
   const explorer = new WickExplorer(studio, explorerEl);
   new WickProperties(studio, propsEl);
   const editor = new WickScriptEditor(studio, { tabsEl, panesEl, viewportPane });
   const project = new WickProject(studio, { onStatus: status, onTitle: (n) => { titleBtn.textContent = n; document.title = `${n} | Wick Engine`; } });
- 
-  world.onPick = (inst) => studio.select(inst);
+
+  world.onPick = (inst, additive) => studio.pick(inst, additive);
   world.onTransformCommit = () => studio.commit();
   world.onContextRequest = (inst, x, y) => explorer.menu(inst, x, y);
   world.onMouseButton = (button, down) => runtime.onMouse(button, down);
@@ -116,17 +138,21 @@ export function startStudio({ root, havok, core }) {
     log('error', 'The graphics context was lost (usually a GPU reset).');
     if (runtime.playing) runtime.stop('The graphics context was lost, so the game was stopped.');
   };
+  gui.onEditSelect = (inst, additive) => studio.select(inst, additive);
+  gui.onEditChange = () => studio.commit();
   guard.onDegrade = (tier) => { log('warn', `Wick Guard lowered graphics quality to ${tier} to keep the game smooth.`); toast(`Graphics quality lowered to ${tier}`, 'warn'); refreshStats(); };
   guard.onStop = (message) => {
     log('error', `Wick Guard stopped the game: ${message}`);
     queueMicrotask(() => runtime.stop(message));
   };
- 
+  dm.on('changed', (inst, prop) => { if (inst === dm.lighting && prop === 'MinGraphics') guard.reset(true); }); // the developer's minimum graphics
+
   runtime.onStateChange = (playing, reason) => {
     app.classList.toggle('is-playing', playing);
     studio.emit('playstate');
     status(playing ? 'Playing' : 'Stopped');
     if (!playing) world.keys.clear();
+    updateSnap();
     if (!playing && reason) {
       modal({
         title: 'Wick Guard stopped the game',
@@ -144,12 +170,36 @@ export function startStudio({ root, havok, core }) {
     if (runtime.playing) status(paused ? 'Paused' : 'Playing');
   };
   studio.on('dirty', () => status('Unsaved changes'));
-  studio.on('tool', (t) => Object.entries(toolBtns).forEach(([id, b]) => b.classList.toggle('is-active', id === t)));
+  studio.on('tool', (t) => { Object.entries(toolBtns).forEach(([id, b]) => b.classList.toggle('is-active', id === t)); updateSnap(); });
+  studio.on('selection', () => updateSnap());
+  studio.on('save-bundle', () => saveSelectionAsBundle(studio));
   studio.setTool('select');
- 
+
+  // ---------------------------------------------------------------- snapping box (bottom right of the viewport)
+  /** Visible only while a Part is selected and Move, Rotate or Scale is the active tool. */
+  function updateSnap() {
+    const t = studio.tool;
+    const show = !runtime.playing && SNAP_TOOLS[t] && world.selectedParts.length > 0;
+    snapBox.hidden = !show;
+    if (!show) return;
+    snapLabel.textContent = `${SNAP_TOOLS[t][0]} snap`;
+    snapUnit.textContent = SNAP_TOOLS[t][1];
+    if (document.activeElement !== snapInput) snapInput.value = world.snap[t];
+  }
+  snapInput.addEventListener('change', () => {
+    const t = studio.tool;
+    const v = Math.max(0, Number(snapInput.value));
+    if (!SNAP_TOOLS[t] || !Number.isFinite(v)) { updateSnap(); return; }
+    world.setSnap({ [t]: v });
+    saveSettings({ snap: { ...world.snap } });
+    updateSnap();
+  });
+  snapInput.addEventListener('pointerdown', (e) => e.stopPropagation());
+
+  // ---------------------------------------------------------------- play, pause
   async function togglePlay() {
     if (runtime.playing) { runtime.stop(); return; }
-    editor.show('viewport');
+    if (!textMode?.active) editor.show('viewport');
     await runtime.play();
   }
 
@@ -164,7 +214,29 @@ export function startStudio({ root, havok, core }) {
     if (runtime.autoPaused) runtime.resume();
     guard.reset(true);
   });
- 
+
+  // ---------------------------------------------------------------- UI visibility chip
+  const setUiVisible = (on) => { gui.setVisible(on); uiChip.textContent = `UI: ${on ? 'on' : 'off'}`; saveSettings({ showUi: on }); };
+  uiChip.addEventListener('click', () => setUiVisible(!gui.visible));
+  uiChip.addEventListener('pointerdown', (e) => e.stopPropagation());
+  setUiVisible(settings.showUi !== false);
+
+  // ---------------------------------------------------------------- text-only interface
+  textMode = new WickTextMode({ studio, project, host: center, log, controls: { play: () => runtime.play(), stop: () => runtime.stop(), isPlaying: () => runtime.playing } });
+  async function setTextMode(on) {
+    if (on === textMode.active) return;
+    if (runtime.playing) { toast('Stop the game first.', 'warn'); return; }
+    if (on) {
+      if (!(await showTextModeIntro())) return;
+      studio.select(null);
+      app.classList.add('is-text');
+      await textMode.enter();
+    } else {
+      textMode.leave();
+      app.classList.remove('is-text');
+    }
+  }
+
   // ---------------------------------------------------------------- menus
   const quality = () => guard.quality;
   const setQuality = (q) => {
@@ -176,25 +248,31 @@ export function startStudio({ root, havok, core }) {
     label, checked: !app.classList.contains(cls),
     action: () => { app.classList.toggle(cls); saveSettings({ [key]: app.classList.contains(cls) }); },
   });
- 
+
   const fileMenu = () => [
-    { label: 'New Project', action: () => project.newProject() },
-    { label: 'Open Demo Project', action: () => project.openDemo() },
+    { label: 'New Project...', action: () => project.newProject() },
     { separator: true },
     { label: 'Open from File...', action: () => project.openFromPicker() },
     { label: 'Save to File...', shortcut: 'Ctrl+S', action: () => project.saveToFile() },
     { separator: true },
+    { label: 'Export Game...', action: () => showExportDialog(studio) },
+    { separator: true },
     { label: 'Rename Project...', action: () => project.rename() },
   ];
+  const none = () => !studio.selection.length || studio.selection.some((i) => i.service);
   const editMenu = () => [
     { label: 'Undo', shortcut: 'Ctrl+Z', disabled: !studio.canUndo, action: () => studio.undo() },
     { label: 'Redo', shortcut: 'Ctrl+Y', disabled: !studio.canRedo, action: () => studio.redo() },
     { separator: true },
-    { label: 'Copy', shortcut: 'Ctrl+C', disabled: !studio.selected || studio.selected.service, action: () => studio.copy() },
+    { label: 'Copy', shortcut: 'Ctrl+C', disabled: none(), action: () => studio.copy() },
     { label: 'Paste', shortcut: 'Ctrl+V', disabled: !studio.clipboard, action: () => studio.paste() },
-    { label: 'Duplicate', shortcut: 'Ctrl+D', disabled: !studio.selected || studio.selected.service, action: () => studio.duplicate() },
-    { label: 'Rename', shortcut: 'F2', disabled: !studio.selected || studio.selected.service, action: () => explorer.beginRename() },
-    { label: 'Delete', shortcut: 'Del', disabled: !studio.selected || studio.selected.service, action: () => studio.delete() },
+    { label: 'Duplicate', shortcut: 'Ctrl+D', disabled: none(), action: () => studio.duplicate() },
+    { label: 'Rename', shortcut: 'F2', disabled: studio.selection.length !== 1 || none(), action: () => explorer.beginRename() },
+    { label: 'Delete', shortcut: 'Del', disabled: none(), action: () => studio.delete() },
+    { separator: true },
+    { label: 'Group as Model', shortcut: 'Ctrl+G', disabled: none() || !studio.canGroupAsModel(), action: () => studio.group('Model') },
+    { label: 'Group as Folder', shortcut: 'Ctrl+Shift+G', disabled: none(), action: () => studio.group('Folder') },
+    { label: 'Ungroup', shortcut: 'Ctrl+U', disabled: !studio.topLevel().some((i) => i.className === 'Model' || i.className === 'Folder'), action: () => studio.ungroup() },
   ];
   const qualityItems = () => [
     { label: 'Auto (recommended)', checked: quality() === 'auto', action: () => setQuality('auto') },
@@ -205,13 +283,17 @@ export function startStudio({ root, havok, core }) {
   const viewMenu = () => [
     panel('hide-dock', 'Explorer and Properties', 'hideDock'),
     panel('hide-output', 'Output', 'hideOutput'),
+    { label: 'User Interface in Viewport', checked: gui.visible, action: () => setUiVisible(!gui.visible) },
     { separator: true },
-    { label: 'Focus Selection', shortcut: 'F', disabled: studio.selected?.className !== 'Part', action: () => studio.focus() },
+    { label: 'Focus Selection', shortcut: 'F', disabled: !world.selectedParts.length, action: () => studio.focus() },
     { label: 'Graphics Quality', submenu: qualityItems() },
     { label: 'WickGuard Limits...', action: () => editLimits() },
+    { separator: true },
+    { label: textMode.active ? 'Graphical Interface' : 'Text-only Interface', action: () => setTextMode(!textMode.active) },
   ];
   const helpMenu = () => [
     { label: 'Controls and Lua Reference', action: openHelp },
+    { label: 'AI Agent Skill (SKILL.md)', action: () => showSkill() },
     { label: 'About Wick Engine', action: () => showAbout({ world, limits, partCount: dm.partCount, projectName: dm.projectName }) },
   ];
   let openBtn = null;
@@ -222,10 +304,11 @@ export function startStudio({ root, havok, core }) {
     b.addEventListener('pointerenter', () => { if (isMenuOpen()) open(); }); // slide between menus like a desktop app
     return b;
   };
-  menubar.append(menuButton('File', fileMenu), menuButton('Edit', editMenu), menuButton('View', viewMenu), menuButton('Help', helpMenu), h('div', { class: 'wk-spacer' }), titleBtn, h('div', { class: 'wk-spacer' }));
+  const libraryBtn = h('button', { class: 'wk-menubtn', onclick: () => { closeMenus(); showLibrary(studio); } }, 'Library');
+  menubar.append(menuButton('File', fileMenu), menuButton('Edit', editMenu), menuButton('View', viewMenu), libraryBtn, menuButton('Help', helpMenu), h('div', { class: 'wk-spacer' }), titleBtn, h('div', { class: 'wk-spacer' }));
   titleBtn.addEventListener('click', () => project.rename());
   qualityBtn.addEventListener('click', () => { const r = qualityBtn.getBoundingClientRect(); showMenu(qualityItems(), r.right - 180, r.bottom); });
- 
+
   const openHelp = () => showHelp({ limits, onEditLimits: () => editLimits() });
 
   function editLimits() {
@@ -271,12 +354,12 @@ export function startStudio({ root, havok, core }) {
   drag(hSplit, (e) => app.style.setProperty('--out-h', `${Math.min(420, Math.max(60, window.innerHeight - 24 - e.clientY))}px`));
   if (settings.hideDock) app.classList.add('hide-dock');
   if (settings.hideOutput) app.classList.add('hide-output');
- 
+
   // ---------------------------------------------------------------- keyboard
   window.addEventListener('keydown', (e) => {
     if (isTyping(e.target) || document.querySelector('.wk-overlay')) return;
     const mod = e.ctrlKey || e.metaKey;
-    if (!mod) world.setKey(e.code, true); // the camera flies on W A S D Q E at all times
+    if (!mod) world.setKey(e.code, true); // the camera flies on W A S D Q E at all times (unless a CameraPoint owns it)
     if (runtime.playing) {
       runtime.onKey(e.code, true);
       if (e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
@@ -284,7 +367,11 @@ export function startStudio({ root, havok, core }) {
     }
     const k = e.key.toLowerCase();
     if (mod) {
-      const handled = { s: () => project.saveToFile(), z: () => (e.shiftKey ? studio.redo() : studio.undo()), y: () => studio.redo(), c: () => studio.copy(), v: () => studio.paste(), d: () => studio.duplicate() }[k];
+      const handled = {
+        s: () => project.saveToFile(), z: () => (e.shiftKey ? studio.redo() : studio.undo()), y: () => studio.redo(),
+        c: () => studio.copy(), v: () => studio.paste(), d: () => studio.duplicate(),
+        g: () => studio.group(e.shiftKey ? 'Folder' : 'Model'), u: () => studio.ungroup(),
+      }[k];
       if (handled) { e.preventDefault(); handled(); }
       return;
     }
@@ -316,17 +403,26 @@ export function startStudio({ root, havok, core }) {
     stopBtn.disabled = !runtime.playing;
   }
   setInterval(refreshStats, 500);
- 
-  installAppFeel({ onFileDrop: (f) => project.openFile(f), isDirty: () => project.unsaved });
+
+  // Dropped files: a .wick project opens, anything else (images, sounds, 3D models, Lua, bundles) goes to the Library.
+  installAppFeel({
+    onFileDrop: async (files) => {
+      const wick = files.find((f) => /\.(wick|json)$/i.test(f.name));
+      if (wick) { project.openFile(wick); return; }
+      const added = await importFiles(assets, files);
+      if (added.length) showLibrary(studio, added[added.length - 1].kind);
+    },
+    isDirty: () => project.unsaved,
+  });
   window.addEventListener('error', (e) => log('error', `Internal error: ${e.message}`));
   window.addEventListener('unhandledrejection', (e) => log('error', `Internal error: ${e.reason?.message || e.reason}`));
- 
+
   guard.setQuality(settings.quality ?? 'auto');
-  const firstVisit = !localStorage.getItem('wick.project.autosave');
-  project.startup();
+  const restored = await project.startup();
   refreshStats();
   log('info', 'Wick Engine ready. Press Play to run the project.');
-  if (firstVisit) toast('Welcome! This is the demo project. File > New Project starts a fresh one.');
+  if (assets.error) log('warn', 'Browser storage (IndexedDB) is unavailable or full, so imported assets will not be kept after this tab closes.');
+  if (!restored) toast('Welcome! This is the demo project. File > New Project has more templates.');
   if (!settings.hardware) hardwareDiagnostic(true); // first run: measure this device and pick the starting quality
 
   return { dm, world, studio, runtime };
