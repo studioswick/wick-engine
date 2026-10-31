@@ -36,6 +36,12 @@ const ICONS = {
   game: '<path d="M8 1.8l6 6.2-6 6.2-6-6.2z"/>',
   chevron: '<path d="M6 4l4 4-4 4"/>',
   plus: '<path d="M8 3v10M3 8h10"/>',
+  model: '<path d="M2.5 5.5L8 2.5l5.5 3v5L8 13.5l-5.5-3z"/><path d="M2.5 5.5L8 8.5l5.5-3M8 8.5v5"/>',
+  camera: '<rect x="1.8" y="4.5" width="9" height="7" rx="1.2"/><path d="M10.8 7.2l3.4-1.8v5.2l-3.4-1.8z"/>',
+  gui: '<rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M2 5.5h12"/>',
+  ui: '<rect x="2.5" y="4" width="11" height="8" rx="1.5"/><path d="M5 8h6"/>',
+  mod: '<path d="M3 5h10M3 8h10M3 11h6"/>',
+  mesh: '<path d="M8 1.8l5.5 3.2v6L8 14.2 2.5 11V5zM2.5 5L8 8.2 13.5 5M8 8.2v6"/><path d="M5.2 3.4l5.6 6.4"/>',
 };
 
 export function icon(name, size = 16) {
@@ -61,10 +67,13 @@ export function iconFor(inst) {
     case 'Lighting': return 'lighting';
     case 'Scripts': case 'Script': return 'script';
     case 'Folder': return 'folder';
+    case 'Model': return 'model';
+    case 'CameraPoint': return 'camera';
+    case 'Gui': case 'ScreenGui': return 'gui';
     case 'PointLight': return 'light';
     case 'Sound': return 'sound';
-    case 'Part': return inst.props.Shape === 'Ball' ? 'ball' : inst.props.Shape === 'Cylinder' ? 'cylinder' : 'block';
-    default: return 'block';
+    case 'Part': return inst.props.Shape === 'Ball' ? 'ball' : inst.props.Shape === 'Cylinder' ? 'cylinder' : inst.props.Shape === 'Mesh' ? 'mesh' : 'block';
+    default: return inst.className.startsWith('UI') ? 'mod' : /^(Frame|Text|Image|Scrolling)/.test(inst.className) ? 'ui' : 'block';
   }
 }
 
@@ -239,8 +248,8 @@ export function installAppFeel({ onFileDrop, isDirty } = {}) {
   window.addEventListener('dragover', (e) => e.preventDefault());
   window.addEventListener('drop', (e) => {
     e.preventDefault();
-    const file = e.dataTransfer?.files?.[0];
-    if (file) onFileDrop?.(file);
+    const files = [...(e.dataTransfer?.files ?? [])];
+    if (files.length) onFileDrop?.(files);
   });
 
   // Page-level shortcuts that an app would not expose (save, bookmark, print, find-next, select-all).
@@ -248,7 +257,7 @@ export function installAppFeel({ onFileDrop, isDirty } = {}) {
     const mod = e.ctrlKey || e.metaKey;
     if (!mod) return;
     const k = e.key.toLowerCase();
-    if (['s', 'd', 'p', 'g'].includes(k) || (k === 'a' && !editable(e.target))) e.preventDefault();
+    if (['s', 'd', 'p', 'g', 'u'].includes(k) || (k === 'a' && !editable(e.target))) e.preventDefault();
   }, true); // capture phase, so the script editor stopping propagation cannot let the browser shortcut through
 
   window.addEventListener('beforeunload', (e) => {
