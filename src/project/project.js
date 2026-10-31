@@ -1,9 +1,14 @@
-// Wick project persistence: autosave to this browser, open/save .wick files, new project and the demo.
+// Wick project persistence: autosave to IndexedDB, open/save .wick files (with the assets they use embedded),
+// new project from a template.
 
-import { buildDemo } from './demo.js';
+import { buildTemplate } from './templates.js';
+import { idbGet, idbPut } from './storage.js';
+import { projectFileData, importProjectData } from './projectfile.js';
 import { confirmDialog, promptDialog } from '../studio/ui.js';
+import { showTemplates } from '../studio/dialogs.js';
 
-const AUTOSAVE_KEY = 'wick.project.autosave';
+const AUTOSAVE_KEY = 'autosave';
+const LEGACY_AUTOSAVE_KEY = 'wick.project.autosave'; // projects used to autosave to localStorage
 const SETTINGS_KEY = 'wick.settings';
 const AUTOSAVE_DELAY_MS = 1500;
 
@@ -32,21 +37,27 @@ export class WickProject {
   /** True while work exists that is not safely stored anywhere. */
   get unsaved() { return this._timer !== null || this.autosaveFailed; }
 
-  /** First visit: the demo. Later visits: the last autosaved project. */
-  startup() {
+  /** First visit: the Wick demo. Later visits: the last autosaved project. Resolves with true if one was restored. */
+  async startup() {
     let data = null;
-    try { data = JSON.parse(localStorage.getItem(AUTOSAVE_KEY)); } catch { /* corrupt autosave is ignored */ }
+    try { data = await idbGet('projects', AUTOSAVE_KEY); } catch { /* IndexedDB unavailable: fall back below */ }
+    if (!data) {
+      try { data = JSON.parse(localStorage.getItem(LEGACY_AUTOSAVE_KEY)); } catch { /* corrupt autosave is ignored */ }
+    }
     if (data) {
       try {
         this.dm.load(data);
         this.studio.resetHistory();
+        localStorage.removeItem(LEGACY_AUTOSAVE_KEY);
+        await this._autosaveNow();
         this.onStatus('Restored your last project');
-        return;
+        return true;
       } catch { /* fall through to the demo */ }
     }
-    buildDemo(this.dm);
+    await buildTemplate('demo', this.dm);
     this.studio.resetHistory();
-    this._autosaveNow();
+    await this._autosaveNow();
+    return false;
   }
 
   _scheduleAutosave() {
@@ -56,12 +67,12 @@ export class WickProject {
     this._timer = setTimeout(() => this._autosaveNow(), AUTOSAVE_DELAY_MS);
   }
 
-  _autosaveNow() {
+  async _autosaveNow() {
     clearTimeout(this._timer);
     this._timer = null;
     if (this.studio.playing) return;
     try {
-      localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(this.dm.toJSON()));
+      await idbPut('projects', this.dm.toJSON(), AUTOSAVE_KEY);
       this.autosaveFailed = false;
       this.onStatus('Saved in this browser');
     } catch {
@@ -71,18 +82,28 @@ export class WickProject {
   }
 
   async _replaceWith(build, status) {
-    if (this.studio.playing) { this.studio.toast('Stop the game first.', 'warn'); return; }
+    if (this.studio.playing) { this.studio.toast('Stop the game first.', 'warn'); return false; }
     const ok = await confirmDialog('Replace current project?', 'The project open now will be replaced. Save it to a file first if you want to keep it.', 'Replace');
-    if (!ok) return;
+    if (!ok) return false;
     this.studio.select(null);
-    build();
+    try {
+      await build();
+    } catch (err) {
+      this.studio.toast(err.message, 'error');
+      return false;
+    }
     this.studio.resetHistory();
-    this._autosaveNow();
+    await this._autosaveNow();
     this.onStatus(status);
+    return true;
   }
 
-  newProject() { return this._replaceWith(() => this.dm.loadBlank('Untitled Project'), 'New project created'); }
-  openDemo() { return this._replaceWith(() => buildDemo(this.dm), 'Demo project loaded'); }
+  /** File > New Project: pick a template, then replace the current project with it. */
+  async newProject() {
+    const id = await showTemplates();
+    if (!id) return false;
+    return this._replaceWith(() => buildTemplate(id, this.dm), 'New project created');
+  }
 
   openFromPicker() {
     const input = document.createElement('input');
@@ -95,11 +116,11 @@ export class WickProject {
   async openFile(file) {
     if (this.studio.playing) { this.studio.toast('Stop the game first.', 'warn'); return; }
     try {
-      const data = JSON.parse(await file.text());
+      const data = await importProjectData(JSON.parse(await file.text()), this.dm.assets);
       this.studio.select(null);
       this.dm.load(data);
       this.studio.resetHistory();
-      this._autosaveNow();
+      await this._autosaveNow();
       this.onStatus(`Opened ${file.name}`);
     } catch (err) {
       this.studio.toast(err instanceof SyntaxError ? 'That file is not valid JSON.' : err.message, 'error');
@@ -110,7 +131,7 @@ export class WickProject {
     if (this.studio.playing) { this.studio.toast('Stop the game before saving.', 'warn'); return; }
     this._autosaveNow();
     const name = `${this.dm.projectName.replace(/[^\w\- ]+/g, '').trim() || 'project'}.wick`;
-    const url = URL.createObjectURL(new Blob([JSON.stringify(this.dm.toJSON())], { type: 'application/json' }));
+    const url = URL.createObjectURL(new Blob([JSON.stringify(projectFileData(this.dm))], { type: 'application/json' }));
     const a = Object.assign(document.createElement('a'), { href: url, download: name });
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
