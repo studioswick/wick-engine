@@ -8,6 +8,8 @@ import { TIERS } from '../engine/world.js';
 import { RATINGS } from '../engine/diagnostic.js';
 import { soundId, WICK_SOUNDS } from '../engine/library.js';
 import { WICK_VERSION, WICK_STAGE } from '../version.js';
+import { TEMPLATES } from '../project/templates.js';
+import { loadSkillText, downloadText } from './skill.js';
 import { h, infoDialog, modal, toast } from './ui.js';
 
 const code = (text) => h('pre', {}, text);
@@ -38,7 +40,8 @@ function controls() {
       ['Right mouse drag', 'Look around.'],
       ['Middle mouse drag', 'Pan the camera.'],
       ['Mouse wheel', 'Move forward and back.'],
-      ['Left click', 'Select a Part.'],
+      ['Left click', 'Select a Part. Hold Shift and click to add Parts to the selection or remove them. You can also Shift- or Ctrl-click rows in the Explorer.'],
+      ['Snapping', 'With a Part selected and Move, Rotate or Scale active, a box at the bottom right of the viewport sets the snap: 1 stud, 15 degrees and 0.5 studs by default. 0 turns snapping off.'],
       ['1  2  3  4', 'Select, Move, Rotate and Scale tools.'],
       ['F', 'Focus the camera on the selection.'],
       ['Short right click', 'Opens the context menu (copy, duplicate, delete, insert...). Explorer rows have the same menu.'],
@@ -47,6 +50,7 @@ function controls() {
     table([
       ['Ctrl+Z / Ctrl+Y', 'Undo and redo.'],
       ['Ctrl+C / Ctrl+V / Ctrl+D', 'Copy, paste and duplicate.'],
+      ['Ctrl+G / Ctrl+Shift+G / Ctrl+U', 'Group the selection as a Model (Parts and Models only), group it as a Folder (anything), and ungroup.'],
       ['F2, Del', 'Rename and delete.'],
       ['Ctrl+S', 'Save the project to a .wick file. It also autosaves in this browser.'],
     ]),
@@ -113,6 +117,39 @@ hum.SoundId = "${soundId('hum')}"
 hum.Looped = true
 hum:Play()`),
     para(`Gravity is multiplied by 3 inside the engine, so the default 9.81 feels right at Wick's scale. Parts also get friction, bounce, rolling resistance and air drag from their Material, and collisions play an impact sound that depends on both materials, so scripts never have to play those.`),
+    h('h4', {}, 'Raycasting and the camera'),
+    code(`-- workspace:Raycast(origin, direction, ignore): direction's length is how far the ray reaches
+local hit = workspace:Raycast(Vector3.new(0, 50, 0), Vector3.new(0, -100, 0), nil)
+if hit then print(hit.Instance.Name, hit.Position, hit.Normal, hit.Distance) end
+
+local cam = workspace.CurrentCamera        -- read-only: Position, LookVector, FieldOfView
+-- To move the camera, add a CameraPoint to a Part (Insert > CameraPoint) and move that Part from a script.`),
+    h('h4', {}, 'Mouse look and the wheel'),
+    code(`-- While a game runs, dragging with the right mouse button and the wheel reach scripts as InputChanged
+game:GetService("UserInputService").InputChanged:Connect(function(input)
+  if input.UserInputType == "MouseMovement" then print(input.Delta.X, input.Delta.Y) end
+  if input.UserInputType == "MouseWheel" then print(input.Delta.Z) end    -- +1 up, -1 down
+end)`),
+    h('h4', {}, 'User interface'),
+    code(`-- Build one in the Studio (Insert > UI, edit Position and Size in Properties) or in code:
+local gui = Instance.new("ScreenGui", game.Gui)
+local button = Instance.new("TextButton", gui)
+button.AnchorPoint = Vector2.new(0.5, 0.5)
+button.Position = UDim2.fromScale(0.5, 0.5)      -- UDim2.new(xScale, xOffset, yScale, yOffset)
+button.Size = UDim2.fromOffset(180, 48)           -- offsets are pixels
+button.Text = "Click me"
+Instance.new("UICorner", button).CornerRadius = 10
+
+button.MouseButton1Click:Connect(function() button.Text = "Clicked!" end)
+button.MouseEnter:Connect(function() button.BackgroundColor = Color3.fromRGB(255, 200, 80) end)
+
+-- Layouts: put a UIListLayout or UIGridLayout inside a Frame and its children are arranged for you.
+-- Glide any property: TweenService:Create(object, TweenInfo.new(time, style, direction), { Property = goal }):Play()
+local tween = game:GetService("TweenService"):Create(button, TweenInfo.new(0.5, "Back", "Out"), { Size = UDim2.fromOffset(240, 60) })
+tween.Completed:Connect(function() print("done") end)
+tween:Play()`),
+    h('h4', {}, 'The script variable'),
+    para('Every Script has a local called script that is the Script instance, so script.Parent is whatever it sits in (a Part, a Model, a Folder...).'),
     h('h4', {}, 'Examples'),
     code(`-- Spin an anchored part (anchor it so physics does not fight the script)
 local fan = workspace.Fan
@@ -152,11 +189,13 @@ end)`),
   ];
 }
 
-const TYPE_NAMES = { number: 'number', boolean: 'boolean', string: 'string', source: 'string', enum: 'string', vector3: 'Vector3', color: 'Color3' };
+const TYPE_NAMES = { number: 'number', boolean: 'boolean', string: 'string', source: 'string', enum: 'string', vector3: 'Vector3', vector2: 'Vector2', udim2: 'UDim2', color: 'Color3' };
 
 function fmtDefault(def) {
   if (def.type === 'vector3') return `Vector3.new(${def.default.join(', ')})`;
   if (def.type === 'color') return `Color3.new(${def.default.join(', ')})`;
+  if (def.type === 'vector2') return `Vector2.new(${def.default.join(', ')})`;
+  if (def.type === 'udim2') return `UDim2.new(${def.default.join(', ')})`;
   if (def.type === 'source') return '(script text)';
   return def.type === 'string' || def.type === 'enum' ? `"${def.default}"` : String(def.default);
 }
@@ -183,7 +222,9 @@ function reference() {
       ['Color3.new(r, g, b)', 'Red, green and blue from 0 to 1.'],
       ['Color3.fromRGB(r, g, b)', 'The same from 0 to 255.'],
       ['c.R  c.G  c.B', 'Components. Colors compare with ==.'],
-      ['typeof(x)', '"Vector3", "Color3", "Instance", or the plain Lua type.'],
+      ['Vector2.new(x, y)', 'A 2D value (AnchorPoint, mouse deltas). Has X, Y, Magnitude, Unit, Lerp and + - * /.'],
+      ['UDim2.new(xs, xo, ys, yo)', 'A UI size or position: a fraction of the parent (scale) plus pixels (offset) per axis. Also UDim2.fromScale(x, y), UDim2.fromOffset(x, y), + - ==, :Lerp. Read parts as u.X.Scale, u.X.Offset, u.Y.Scale, u.Y.Offset.'],
+      ['typeof(x)', '"Vector3", "Vector2", "UDim2", "Color3", "Instance", or the plain Lua type.'],
     ]),
     h('h4', {}, 'Every Instance'),
     table([
@@ -205,7 +246,13 @@ function reference() {
       ['game:GetService("RunService").Heartbeat', 'Fires every frame with dt in seconds.'],
       ['game:GetService("UserInputService")', 'InputBegan and InputEnded (fire with an input table: KeyCode, UserInputType), and IsKeyDown(name).'],
       ['game:GetService("Workspace" | "Lighting" | "Scripts")', 'The built-in services. game.Workspace works too, and workspace is a shortcut.'],
-      ['workspace.CurrentCamera', 'Read-only Position and LookVector of the camera.'],
+      ['workspace.CurrentCamera', 'Read-only Position, LookVector and FieldOfView of the camera.'],
+      ['workspace:Raycast(origin, direction, ignore)', 'First collidable Part along the ray, or nil: { Instance, Position, Normal, Distance }.'],
+      ['game:GetService("TweenService")', ':Create(instance, TweenInfo.new(time, style, direction), goals) returns a tween with :Play(), :Cancel(), .Completed. Styles: Linear Quad Cubic Sine Back. Directions: In Out InOut.'],
+      ['UserInputService.InputChanged', 'Fires with { UserInputType = "MouseMovement" | "MouseWheel", Delta }.'],
+      ['button.MouseButton1Click, .Activated, .MouseButton1Down, .MouseButton1Up, .MouseButton2Click, .MouseEnter, .MouseLeave', 'UI events (TextButton and ImageButton; the others except Click work on any UI object).'],
+      ['textBox.Focused, .FocusLost(enterPressed)', 'TextBox events. :CaptureFocus() and :ReleaseFocus() move the cursor.'],
+      ['script', 'The Script instance running this code.'],
       ['signal:Connect(fn)', 'Returns a connection with :Disconnect() and .Connected.'],
       ['signal:Wait()', 'Pauses this thread until the event fires and returns its arguments.'],
       ['task.wait  spawn  delay  defer', 'See the scripting guide.'],
@@ -234,6 +281,8 @@ function safety(ctx) {
       ['Scripts', 'A script that runs too long without task.wait() is stopped with an error naming its line. If scripts are what use most of each frame, the game is stopped instead of lowering graphics, because that would not help.'],
       ['Stopping', 'The game is stopped, and the project restored, for a frozen frame, running out of memory, too many physics bodies, or an unplayable frame rate at the lowest quality.'],
       ['Tab hidden', 'The game pauses while the tab is hidden and resumes on return, so a background tab is never mistaken for a crash.'],
+      ['Minimum graphics', 'Lighting.MinGraphics is the lowest quality tier the game will run at. Auto quality never steps below it; if the device cannot hold that tier the game is stopped instead.'],
+      ['Lag', 'Physics always steps in fixed 1/60 second steps and pays back lost time with extra steps (up to one second), and scripts get real elapsed time, so a lag spike makes motion choppy but never slows the game or destabilises physics.'],
     ]),
     h('h4', {}, 'Your current limits'),
     para(`The first time Wick Engine starts it measures this device, and the limits below are calculated from the result${ctx.limits.hardware.measured ? '' : ' (not measured yet, so typical values are used)'}. Change them or reset them to the calculated defaults any time.`),
@@ -250,6 +299,7 @@ export function showHelp(ctx) {
     { title: 'Scripting', build: scripting },
     { title: 'Reference', build: reference },
     { title: 'Safety', build: () => safety(ctx) },
+    { title: 'AI Agents', build: agents },
   ]), 780);
 }
 
@@ -262,8 +312,9 @@ export function showAbout({ world, limits, partCount, projectName }) {
     para('Wick Engine is a browser game engine by Wick Studios, in early development. It runs entirely in your browser: nothing is uploaded, and projects are stored in this browser or in .wick files you save.'),
     h('h4', {}, 'How it works'),
     table([
-      ['Rendering', `Babylon.js ${globalThis.BABYLON.Engine.Version}: physically based materials, real-time reflections, shadows and bloom.`],
-      ['Physics', 'Havok rigid bodies, with friction, bounce and drag from each Material.'],
+      ['Rendering', `Babylon.js ${globalThis.BABYLON.Engine.Version}: physically based materials, real-time reflections, shadows and bloom, a day and night sky with volumetric clouds, and wind-swayed grass blades.`],
+      ['Physics', 'Havok rigid bodies stepped at a fixed 60 Hz (lag is paid back in extra steps, never one big one), with friction, bounce and drag from each Material.'],
+      ['Storage', 'Autosave and the Library (imported images, sounds, 3D models, scripts, bundles) are kept in this browser with IndexedDB. The app works offline after its first load.'],
       ['Scripting', 'Lua 5.5 compiled to WebAssembly, sandboxed with time and memory limits.'],
       ['Audio', 'Babylon Audio Engine V2: positional sound and impact sounds synthesised per pair of materials.'],
       ['Safety', 'WickGuard (C++ policy running in the same WebAssembly module).'],
@@ -343,4 +394,66 @@ export function busyDialog(title, text) {
       h('div', { class: 'wk-dialog-body' }, line, h('div', { class: 'wk-busy' }, h('div', { class: 'wk-busy-bar' })))));
   document.body.append(overlay);
   return { set: (t) => { line.textContent = t; }, close: () => overlay.remove() };
+}
+
+// ---------------------------------------------------------------- AI agents (SKILL.md)
+
+function agents() {
+  const view = h('pre', { class: 'wk-skill' }, 'Loading SKILL.md...');
+  let text = '';
+  loadSkillText().then((t) => { text = t; view.textContent = t; });
+  return [
+    para('SKILL.md teaches an AI coding agent everything about Wick: the text project format, the Lua API, every class and property, assets, and how to run and read errors. Give it to your agent as its skill or instructions file.'),
+    h('div', { class: 'wk-row-actions' },
+      h('button', { class: 'wk-btn is-primary', onclick: () => { if (text) downloadText('SKILL.md', text); } }, 'Download SKILL.md'),
+      h('button', { class: 'wk-btn', onclick: async () => { try { await navigator.clipboard.writeText(text); toast('SKILL.md copied'); } catch { toast('The browser blocked clipboard access. Use Download instead.', 'warn'); } } }, 'Copy')),
+    view,
+  ];
+}
+
+/** Opens SKILL.md in its own dialog (used by the Text-only Interface). */
+export function showSkill() {
+  infoDialog('SKILL.md for AI agents', agents(), 780);
+}
+
+// ---------------------------------------------------------------- templates
+
+/** Template picker. Resolves with a template id, or null if cancelled. */
+export function showTemplates() {
+  return new Promise((resolve) => {
+    let picked = null;
+    const cards = TEMPLATES.map((t) => h('button', { class: 'wk-template', onclick: () => { picked = t.id; cards.forEach((c) => c.classList.toggle('is-active', c === card(t))); } },
+      h('div', { class: 'wk-template-name' }, t.name), h('div', { class: 'wk-muted' }, t.description)));
+    const card = (t) => cards[TEMPLATES.indexOf(t)];
+    const dlg = modal({
+      title: 'New project',
+      width: 640,
+      content: [para('Pick a starting point. Your current project is replaced, so save it to a file first if you want to keep it.', 'wk-muted'), h('div', { class: 'wk-templates' }, cards)],
+      buttons: [
+        { label: 'Cancel', cancel: true, action: () => resolve(null) },
+        { label: 'Create', primary: true, action: () => { if (!picked) { toast('Pick a template first', 'warn'); return false; } resolve(picked); } },
+      ],
+    });
+    cards.forEach((c, i) => c.addEventListener('dblclick', () => { resolve(TEMPLATES[i].id); dlg.close(); }));
+  });
+}
+
+/** Shown when switching to the Text-only Interface. Resolves true to continue. */
+export function showTextModeIntro() {
+  return new Promise((resolve) => {
+    modal({
+      title: 'Text-only Interface',
+      width: 560,
+      content: [
+        para('This view shows your project as files: tree.wtree (the object tree), scripts/*.lua and assets/. There is no graphical editor, so an AI agent or any text editor can build the whole game.'),
+        para('Using an AI agent? Open Help > AI Agents and give it SKILL.md. It tells the agent everything it needs: the file formats, the Lua API, assets, and how to run the game and read errors.'),
+        para('Connect a real folder (Chrome or Edge) and the agent works on files in that folder while this window reloads them as they change. Errors and game output are written to .wick/output.log.', 'wk-muted'),
+      ],
+      buttons: [
+        { label: 'Cancel', cancel: true, action: () => resolve(false) },
+        { label: 'Open SKILL.md', action: () => { showSkill(); return false; } },
+        { label: 'Switch', primary: true, action: () => { resolve(true); } },
+      ],
+    });
+  });
 }
