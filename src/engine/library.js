@@ -2,6 +2,8 @@
 // Sounds are addressed as wick://sounds/<name>. Surface textures are used by the Wood and Grass materials.
 // Pure maths only (no DOM, no Babylon), so it also runs headless.
 
+export { WICK_MESHES, meshId, builtinMeshName, builtinMesh } from './meshio.js';
+
 export const SOUND_RATE = 22050;
 
 const SOUNDS = {
@@ -13,6 +15,59 @@ const SOUNDS = {
       const t = i / SOUND_RATE;
       const swell = 0.75 + 0.25 * Math.sin(2 * Math.PI * 2 * t);
       out[i] = swell * (0.45 * Math.sin(2 * Math.PI * 110 * t) + 0.2 * Math.sin(2 * Math.PI * 220 * t) + 0.1 * Math.sin(2 * Math.PI * 330 * t));
+    }
+    return out;
+  },
+  // A bright two-note bell.
+  chime() {
+    const n = SOUND_RATE;
+    const out = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const t = i / SOUND_RATE, second = t > 0.18 ? 1 : 0, u = t - second * 0.18;
+      const f = second ? 1318.5 : 987.8;
+      out[i] = Math.exp(-u * 4.5) * (0.5 * Math.sin(2 * Math.PI * f * u) + 0.2 * Math.sin(2 * Math.PI * f * 2.76 * u) * Math.exp(-u * 6));
+    }
+    return out;
+  },
+  // A rising pickup blip.
+  coin() {
+    const n = Math.floor(SOUND_RATE * 0.35);
+    const out = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const t = i / SOUND_RATE, f = t < 0.09 ? 988 : 1319;
+      out[i] = 0.45 * Math.sign(Math.sin(2 * Math.PI * f * t)) * Math.min(1, (n - i) / (SOUND_RATE * 0.1)) * (t < 0.005 ? t / 0.005 : 1);
+    }
+    return out;
+  },
+  click() {
+    const n = Math.floor(SOUND_RATE * 0.05);
+    const out = new Float32Array(n);
+    for (let i = 0; i < n; i++) out[i] = 0.6 * Math.sin(2 * Math.PI * 1800 * (i / SOUND_RATE)) * Math.exp(-i / SOUND_RATE / 0.008);
+    return out;
+  },
+  // Filtered noise swell.
+  whoosh() {
+    const n = Math.floor(SOUND_RATE * 0.8);
+    const out = new Float32Array(n);
+    let lp = 0, seed = 11;
+    for (let i = 0; i < n; i++) {
+      seed = (seed * 16807) % 2147483647;
+      const t = i / n, a = 0.04 + 0.5 * Math.sin(Math.PI * t);
+      lp += ((seed / 2147483647) * 2 - 1 - lp) * a;
+      out[i] = lp * Math.sin(Math.PI * t) * 1.0;
+    }
+    return out;
+  },
+  // Looping wind: noise whose loudness cycles a whole number of times.
+  wind() {
+    const n = SOUND_RATE * 4;
+    const out = new Float32Array(n);
+    let lp = 0, seed = 5;
+    for (let i = 0; i < n; i++) {
+      seed = (seed * 16807) % 2147483647;
+      const t = i / SOUND_RATE;
+      lp += ((seed / 2147483647) * 2 - 1 - lp) * (0.03 + 0.02 * Math.sin(2 * Math.PI * t / 4));
+      out[i] = lp * (0.7 + 0.3 * Math.sin(2 * Math.PI * 2 * t / 4)) * 1.6;
     }
     return out;
   },
@@ -158,14 +213,140 @@ export function normalMap(height, n, strength) {
   return out;
 }
 
-const TEXTURES = { Wood: { make: wood, bump: 5 }, Grass: { make: grass, bump: 4 } };
+/** Rows-by-columns brick courses, offset every other row, with mortar lines. */
+function brick(n) {
+  const rgba = new Uint8ClampedArray(n * n * 4), height = new Float32Array(n * n);
+  const rows = 8, cols = 4, bh = n / rows, bw = n / cols, mortar = Math.max(2, n / 128);
+  for (let y = 0; y < n; y++) {
+    const row = Math.floor(y / bh), off = (row % 2) * bw / 2;
+    for (let x = 0; x < n; x++) {
+      const xx = (x + off) % n, col = Math.floor(xx / bw);
+      const edge = Math.min(xx - col * bw, (col + 1) * bw - xx, y - row * bh, (row + 1) * bh - y);
+      const i = y * n + x, grain = vnoise(x / n * 64, y / n * 64, 64, 64, 3), tint = hash(col, row, 5);
+      const mortarHere = edge <= mortar;
+      const base = mortarHere ? [176, 170, 158] : [146 + tint * 36, 66 + tint * 22, 46 + tint * 14];
+      for (let k = 0; k < 3; k++) rgba[i * 4 + k] = base[k] * (0.82 + 0.3 * grain);
+      rgba[i * 4 + 3] = 255;
+      height[i] = mortarHere ? 0 : 0.55 + 0.25 * smooth(mortar, mortar * 4, edge) + 0.2 * grain;
+    }
+  }
+  return { rgba, height };
+}
 
-/** World units covered by one repeat of each surface texture. */
-export const TEXTURE_TILE = { Wood: 3, Grass: 3.5 };
+function concrete(n) {
+  const rgba = new Uint8ClampedArray(n * n * 4), height = new Float32Array(n * n);
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      const u = x / n, v = y / n, i = y * n + x;
+      const cloud = fbm(u, v, 3, 3, 4, 8), fine = vnoise(u * 160, v * 160, 160, 160, 2);
+      const pit = smooth(0.86, 0.97, vnoise(u * 48, v * 48, 48, 48, 17));
+      const g = (150 + cloud * 60 + (fine - 0.5) * 26) * (1 - pit * 0.35);
+      rgba[i * 4] = g; rgba[i * 4 + 1] = g * 0.99; rgba[i * 4 + 2] = g * 0.96; rgba[i * 4 + 3] = 255;
+      height[i] = 0.5 * cloud + 0.3 * fine - pit * 0.6;
+    }
+  }
+  return { rgba, height };
+}
 
-/** { color, normal } RGBA byte arrays for a library surface ('Wood' or 'Grass'), n pixels square. */
+function sand(n) {
+  const rgba = new Uint8ClampedArray(n * n * 4), height = new Float32Array(n * n);
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      const u = x / n, v = y / n, i = y * n + x;
+      const ripple = 0.5 + 0.5 * Math.sin((v * 9 + fbm(u, v, 2, 2, 3, 6) * 2.2) * TAU);
+      const grain = vnoise(u * 220, v * 220, 220, 220, 5), patch = fbm(u, v, 4, 4, 3, 12);
+      const t = 0.45 * ripple + 0.3 * patch + 0.25 * grain;
+      rgba[i * 4] = mix(176, 232, t); rgba[i * 4 + 1] = mix(146, 200, t); rgba[i * 4 + 2] = mix(96, 148, t); rgba[i * 4 + 3] = 255;
+      height[i] = 0.7 * ripple + 0.3 * grain;
+    }
+  }
+  return { rgba, height };
+}
+
+function checker(n) {
+  const rgba = new Uint8ClampedArray(n * n * 4), height = new Float32Array(n * n);
+  const cells = 8, size = n / cells;
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      const dark = (Math.floor(x / size) + Math.floor(y / size)) % 2;
+      const i = y * n + x, g = dark ? 46 : 226;
+      rgba[i * 4] = rgba[i * 4 + 1] = rgba[i * 4 + 2] = g; rgba[i * 4 + 3] = 255;
+      height[i] = 0;
+    }
+  }
+  return { rgba, height };
+}
+
+/** Rounded stones separated by dark gaps, from a jittered-grid distance field that wraps at the edges. */
+function cobble(n) {
+  const rgba = new Uint8ClampedArray(n * n * 4), height = new Float32Array(n * n);
+  const g = 8, pts = [];
+  for (let cy = 0; cy < g; cy++) for (let cx = 0; cx < g; cx++) pts.push([cx + 0.15 + 0.7 * hash(cx, cy, 31), cy + 0.15 + 0.7 * hash(cx, cy, 77)]);
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      const px = (x / n) * g, py = (y / n) * g, cx0 = Math.floor(px), cy0 = Math.floor(py);
+      let d1 = 9, d2 = 9, id = 0;
+      for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
+        const wx = (cx0 + ox + g) % g, wy = (cy0 + oy + g) % g, p = pts[wy * g + wx];
+        const d = Math.hypot(px - (cx0 + ox + (p[0] - Math.floor(p[0]))), py - (cy0 + oy + (p[1] - Math.floor(p[1]))));
+        if (d < d1) { d2 = d1; d1 = d; id = wy * g + wx; } else if (d < d2) d2 = d;
+      }
+      const edge = d2 - d1, stone = smooth(0.02, 0.18, edge), tone = hash(id, 3, 9), i = y * n + x;
+      const grain = vnoise(x / n * 96, y / n * 96, 96, 96, 4);
+      const c = (96 + tone * 62 + (grain - 0.5) * 24) * (0.35 + 0.65 * stone);
+      rgba[i * 4] = c; rgba[i * 4 + 1] = c * 0.97; rgba[i * 4 + 2] = c * 0.92; rgba[i * 4 + 3] = 255;
+      height[i] = stone * (0.7 + 0.3 * (1 - Math.min(1, d1)));
+    }
+  }
+  return { rgba, height };
+}
+
+/** Brushed-steel floor plates in a 2 by 2 grid with a rivet at each plate corner. */
+function plates(n) {
+  const rgba = new Uint8ClampedArray(n * n * 4), height = new Float32Array(n * n);
+  const half = n / 2, seam = Math.max(2, n / 160), rivet = n / 64;
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      const lx = x % half, ly = y % half, i = y * n + x;
+      const brush = vnoise(x / n * 6, y / n * 380, 6, 380, 7), tone = 0.9 + 0.1 * hash(Math.floor(x / half), Math.floor(y / half), 2);
+      const edge = Math.min(lx, half - lx, ly, half - ly);
+      const cornerD = Math.min(Math.hypot(lx - half * 0.1, ly - half * 0.1), Math.hypot(lx - half * 0.9, ly - half * 0.1), Math.hypot(lx - half * 0.1, ly - half * 0.9), Math.hypot(lx - half * 0.9, ly - half * 0.9));
+      const dot = 1 - smooth(rivet * 0.6, rivet, cornerD), gap = 1 - smooth(seam, seam * 2.5, edge);
+      const g = (132 + 52 * brush) * tone * (1 - gap * 0.6) * (1 + dot * 0.25);
+      rgba[i * 4] = g * 0.92; rgba[i * 4 + 1] = g * 0.96; rgba[i * 4 + 2] = g; rgba[i * 4 + 3] = 255;
+      height[i] = 0.6 - gap * 0.5 + dot * 0.4 + 0.1 * brush;
+    }
+  }
+  return { rgba, height };
+}
+
+const TEXTURES = {
+  wood: { make: wood, bump: 5, tile: 3 }, grass: { make: grass, bump: 4, tile: 3.5 },
+  brick: { make: brick, bump: 4, tile: 3 }, concrete: { make: concrete, bump: 3, tile: 4 }, sand: { make: sand, bump: 3, tile: 4 },
+  checker: { make: checker, bump: 0, tile: 4 }, cobble: { make: cobble, bump: 5, tile: 4 }, plates: { make: plates, bump: 3, tile: 4 },
+};
+
+export const WICK_TEXTURES = Object.keys(TEXTURES);
+export const textureId = (name) => `wick://textures/${name}`;
+
+/** The Void texture: unlit, always shows its TextureColor whatever the lighting. It has no image. */
+export const VOID_TEXTURE = textureId('void');
+
+/** Library texture name for a Texture value such as wick://textures/brick, or null. */
+export function libraryTextureName(id) {
+  const m = /^wick:\/\/textures\/(\w+)$/.exec(id ?? '');
+  return m && TEXTURES[m[1]] ? m[1] : null;
+}
+
+/** World units covered by one repeat of a library texture. */
+export const textureTile = (name) => TEXTURES[name].tile;
+
+/** { color, normal } RGBA byte arrays for a library texture, n pixels square. */
 export function surfaceTexture(name, n = 512) {
   const t = TEXTURES[name];
   const { rgba, height } = t.make(n);
-  return { color: rgba, normal: normalMap(height, n, t.bump) };
+  return { color: rgba, normal: t.bump ? normalMap(height, n, t.bump) : null };
 }
+
+/** Both textures as RGBA bytes, for a preview. */
+export const previewTexture = (name, n = 96) => TEXTURES[name].make(n).rgba;
