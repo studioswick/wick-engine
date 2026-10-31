@@ -32,10 +32,15 @@ export class WickScriptEditor {
   openScript(inst) {
     if (inst.className !== 'Script') return;
     if (!this.open.has(inst.id)) this._create(inst);
+    else this.resync(); // the project may have been reloaded (Stop, undo, open) since this tab was made
     this.show(inst.id);
   }
 
   _create(inst) {
+    const id = inst.id;
+    // Looked up on every write. Stop, undo and Open rebuild the whole tree, so an instance held from when the tab
+    // opened would be a dead copy whose edits the project never sees.
+    const current = () => this.dm.find(id);
     const area = h('textarea', { class: 'wk-code', spellcheck: 'false', autocomplete: 'off', autocapitalize: 'off', wrap: 'off' });
     area.value = inst.props.Source;
     const gutter = h('div', { class: 'wk-gutter' });
@@ -56,8 +61,10 @@ export class WickScriptEditor {
     };
     area.addEventListener('input', () => {
       lines();
+      const live = current();
+      if (!live) return;
       try {
-        this.dm.set(inst, 'Source', area.value);
+        this.dm.set(live, 'Source', area.value);
       } catch (err) {
         this.studio.toast(err.message, 'error');
         return;
@@ -106,7 +113,7 @@ export class WickScriptEditor {
       const inst = this.dm.find(id);
       if (!inst || inst.className !== 'Script') { this.close(id); continue; }
       r.label.textContent = inst.name;
-      if (r.area.value !== inst.props.Source && document.activeElement !== r.area) {
+      if (r.area.value !== inst.props.Source) {
         r.area.value = inst.props.Source;
         r.area.dispatchEvent(new Event('scroll'));
         r.gutter.dataset.n = '';
