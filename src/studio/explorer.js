@@ -1,8 +1,26 @@
-// Explorer panel: the instance tree with selection, inline rename, drag-to-reparent and a context menu.
+// Explorer panel: the instance tree with multi-selection, inline rename, drag-to-reparent and a context menu.
 
 import { h, icon, iconFor, showMenu } from './ui.js';
 
 const MAX_CHILDREN_SHOWN = 300; // keeps a runaway script from turning the tree into a million rows
+
+/** The Insert submenu items for a studio. Shared by the Explorer, the viewport menu and the toolbar. */
+export function insertItems(s) {
+  const part = (label, what) => ({ label, action: () => s.insert(what) });
+  return [
+    { label: 'Part', submenu: ['Block', 'Ball', 'Cylinder', 'Wedge', 'Cone', 'Pyramid', 'Torus'].map((n) => part(n, n)) },
+    part('Model', 'Model'), part('Folder', 'Folder'), part('Script', 'Script'), part('Sound', 'Sound'),
+    { label: 'PointLight', disabled: s.selected?.className !== 'Part', action: () => s.insert('PointLight') },
+    { label: 'CameraPoint', disabled: s.selected?.className !== 'Part' || !!s.dm.cameraPoint, action: () => s.insert('CameraPoint') },
+    { separator: true },
+    { label: 'UI', submenu: [
+      part('ScreenGui', 'ScreenGui'), { separator: true },
+      ...['Frame', 'TextLabel', 'TextButton', 'TextBox', 'ImageLabel', 'ImageButton', 'ScrollingFrame'].map((n) => part(n, n)),
+      { separator: true },
+      ...['UICorner', 'UIStroke', 'UIPadding', 'UIListLayout', 'UIGridLayout', 'UIAspectRatioConstraint', 'UIScale', 'UIGradient'].map((n) => part(n, n)),
+    ] },
+  ];
+}
 
 export class WickExplorer {
   constructor(studio, host) {
@@ -17,11 +35,11 @@ export class WickExplorer {
     const dm = this.dm;
     for (const evt of ['added', 'removed', 'reparented', 'reset']) dm.on(evt, () => this.schedule());
     dm.on('changed', (_inst, prop) => { if (prop === 'Name' || prop === 'Shape') this.schedule(); });
-    studio.on('selection', (inst) => {
+    studio.on('selection', () => {
       // Only rebuild rows when a collapsed ancestor had to open; otherwise just move the highlight,
       // so a click is never interrupted by the row it landed on being replaced.
       const before = this.expanded.size;
-      this.reveal(inst);
+      for (const inst of studio.selection) this.reveal(inst);
       if (this.expanded.size !== before) this.render(); else this.markSelected();
     });
 
@@ -40,11 +58,13 @@ export class WickExplorer {
   }
 
   markSelected() {
-    this.host.querySelector('.is-selected')?.classList.remove('is-selected');
-    const sel = this.studio.selected;
-    const row = sel && this.host.querySelector(`.wk-row[data-id="${sel.id}"]`);
-    row?.classList.add('is-selected');
-    row?.scrollIntoView({ block: 'nearest' });
+    this.host.querySelectorAll('.is-selected').forEach((n) => n.classList.remove('is-selected'));
+    let last = null;
+    for (const sel of this.studio.selection) {
+      last = this.host.querySelector(`.wk-row[data-id="${sel.id}"]`);
+      last?.classList.add('is-selected');
+    }
+    last?.scrollIntoView({ block: 'nearest' });
   }
 
   reveal(inst) {
@@ -62,7 +82,7 @@ export class WickExplorer {
   _row(parentEl, inst, depth) {
     const open = this.expanded.has(inst.id);
     const hasKids = inst.children.length > 0;
-    const selected = this.studio.selected === inst;
+    const selected = this.studio.isSelected(inst);
     const row = h('div', {
       class: `wk-row${selected ? ' is-selected' : ''}`,
       dataset: { id: inst.id },
@@ -73,9 +93,13 @@ export class WickExplorer {
       icon(iconFor(inst)),
       h('span', { class: 'wk-row-name' }, inst.name));
 
-    row.addEventListener('pointerdown', (e) => { if (e.button === 0 || e.button === 2) this.studio.select(inst); });
+    row.addEventListener('pointerdown', (e) => {
+      if (e.button === 0 && (e.shiftKey || e.ctrlKey || e.metaKey)) { this.studio.select(inst, true); return; } // add to or remove from the selection
+      if (e.button === 2 && this.studio.isSelected(inst)) return; // right-clicking inside a selection keeps it
+      if (e.button === 0 || e.button === 2) this.studio.select(inst);
+    });
     row.addEventListener('dblclick', () => (inst.className === 'Script' ? this.studio.openScript(inst) : this.toggle(inst)));
-    row.addEventListener('contextmenu', (e) => { e.stopPropagation(); this.studio.select(inst); this.menu(inst, e.clientX, e.clientY); });
+    row.addEventListener('contextmenu', (e) => { e.stopPropagation(); this.menu(inst, e.clientX, e.clientY); });
 
     row.addEventListener('dragstart', (e) => {
       if (this.studio.playing) { e.preventDefault(); return; }
@@ -113,36 +137,33 @@ export class WickExplorer {
     this.render();
   }
 
+  /** The right-click menu. It acts on the whole selection (a click on a row has already selected it). */
   menu(inst, x, y) {
     const s = this.studio;
     const items = [];
     if (inst?.className === 'Script') items.push({ label: 'Open Script', action: () => s.openScript(inst) });
-    if (inst?.className === 'Part') items.push({ label: 'Focus', shortcut: 'F', action: () => s.focus(inst) });
+    if (s.world._effective().length) items.push({ label: 'Focus', shortcut: 'F', action: () => s.focus() });
     if (items.length) items.push({ separator: true });
+    const sel = s.selection;
+    const noEdit = !sel.length || sel.some((i) => i.service);
     if (inst) {
       items.push(
-        { label: 'Copy', shortcut: 'Ctrl+C', disabled: inst.service, action: () => s.copy(inst) },
+        { label: 'Copy', shortcut: 'Ctrl+C', disabled: noEdit, action: () => s.copy() },
         { label: 'Paste Into', shortcut: 'Ctrl+V', disabled: !s.clipboard, action: () => s.paste(inst) },
-        { label: 'Duplicate', shortcut: 'Ctrl+D', disabled: inst.service, action: () => s.duplicate(inst) },
-        { label: 'Rename', shortcut: 'F2', disabled: inst.service, action: () => this.beginRename(inst) },
-        { label: 'Delete', shortcut: 'Del', disabled: inst.service, action: () => s.delete(inst) },
+        { label: 'Duplicate', shortcut: 'Ctrl+D', disabled: noEdit, action: () => s.duplicate() },
+        { label: 'Rename', shortcut: 'F2', disabled: sel.length !== 1 || inst.service, action: () => this.beginRename(inst) },
+        { label: 'Delete', shortcut: 'Del', disabled: noEdit, action: () => s.delete() },
+        { separator: true },
+        { label: 'Group as Model', shortcut: 'Ctrl+G', disabled: noEdit || !s.canGroupAsModel(), action: () => s.group('Model') },
+        { label: 'Group as Folder', shortcut: 'Ctrl+Shift+G', disabled: noEdit, action: () => s.group('Folder') },
+        { label: 'Ungroup', shortcut: 'Ctrl+U', disabled: !s.topLevel().some((i) => i.className === 'Model' || i.className === 'Folder'), action: () => s.ungroup() },
+        { label: 'Save to Library as Bundle...', disabled: noEdit, action: () => s.emit('save-bundle') },
         { separator: true },
       );
     } else {
       items.push({ label: 'Paste', shortcut: 'Ctrl+V', disabled: !s.clipboard, action: () => s.paste() }, { separator: true });
     }
-    items.push({
-      label: 'Insert',
-      submenu: [
-        { label: 'Block', action: () => s.insert('Block') },
-        { label: 'Ball', action: () => s.insert('Ball') },
-        { label: 'Cylinder', action: () => s.insert('Cylinder') },
-        { label: 'Folder', action: () => s.insert('Folder') },
-        { label: 'Script', action: () => s.insert('Script') },
-        { label: 'Sound', action: () => s.insert('Sound') },
-        { label: 'PointLight', disabled: inst?.className !== 'Part', action: () => s.insert('PointLight') },
-      ],
-    });
+    items.push({ label: 'Insert', submenu: insertItems(s) });
     showMenu(items, x, y);
   }
 
