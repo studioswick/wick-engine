@@ -16,7 +16,8 @@ local FIRST_SLICE, SLICE, FRAME_BUDGET = limits()
 -- ---------------------------------------------------------------------------------------------
 
 local V3, C3, InstanceMT = { __metatable = "locked" }, { __metatable = "locked" }, { __metatable = "locked" }
-local Vector3, Color3 = {}, {}
+local V2, UD = { __metatable = "locked" }, { __metatable = "locked" }
+local Vector3, Color3, Vector2, UDim2 = {}, {}, {}, {}
 
 function Vector3.new(x, y, z) return setmetatable({ X = x or 0, Y = y or 0, Z = z or 0 }, V3) end
 Vector3.zero, Vector3.one = Vector3.new(0, 0, 0), Vector3.new(1, 1, 1)
@@ -61,17 +62,66 @@ function Color3.fromRGB(r, g, b) return Color3.new((r or 0) / 255, (g or 0) / 25
 C3.__eq = function(a, b) return getmt(b) == C3 and a.R == b.R and a.G == b.G and a.B == b.B end
 C3.__tostring = function(c) return string.format("%g, %g, %g", c.R, c.G, c.B) end
 
+function Vector2.new(x, y) return setmetatable({ X = x or 0, Y = y or 0 }, V2) end
+Vector2.zero, Vector2.one = Vector2.new(0, 0), Vector2.new(1, 1)
+V2.__index = function(v, k)
+  if k == "Magnitude" then return math.sqrt(v.X * v.X + v.Y * v.Y) end
+  if k == "Unit" then
+    local m = math.sqrt(v.X * v.X + v.Y * v.Y)
+    if m == 0 then return v end
+    return Vector2.new(v.X / m, v.Y / m)
+  end
+  if k == "Lerp" then return function(a, b, t) return Vector2.new(a.X + (b.X - a.X) * t, a.Y + (b.Y - a.Y) * t) end end
+end
+V2.__add = function(a, b) return Vector2.new(a.X + b.X, a.Y + b.Y) end
+V2.__sub = function(a, b) return Vector2.new(a.X - b.X, a.Y - b.Y) end
+V2.__unm = function(a) return Vector2.new(-a.X, -a.Y) end
+V2.__mul = function(a, b)
+  if type(a) == "number" then return Vector2.new(a * b.X, a * b.Y) end
+  if type(b) == "number" then return Vector2.new(a.X * b, a.Y * b) end
+  return Vector2.new(a.X * b.X, a.Y * b.Y)
+end
+V2.__div = function(a, b)
+  if type(b) == "number" then return Vector2.new(a.X / b, a.Y / b) end
+  return Vector2.new(a.X / b.X, a.Y / b.Y)
+end
+V2.__eq = function(a, b) return getmt(b) == V2 and a.X == b.X and a.Y == b.Y end
+V2.__tostring = function(v) return string.format("%g, %g", v.X, v.Y) end
+
+-- UDim2: a size or position made of a fraction of the parent (Scale) plus pixels (Offset) on each axis.
+function UDim2.new(xs, xo, ys, yo)
+  return setmetatable({ X = { Scale = xs or 0, Offset = xo or 0 }, Y = { Scale = ys or 0, Offset = yo or 0 } }, UD)
+end
+function UDim2.fromScale(x, y) return UDim2.new(x, 0, y, 0) end
+function UDim2.fromOffset(x, y) return UDim2.new(0, x, 0, y) end
+UD.__index = function(_, k)
+  if k == "Lerp" then
+    return function(a, b, t)
+      return UDim2.new(a.X.Scale + (b.X.Scale - a.X.Scale) * t, a.X.Offset + (b.X.Offset - a.X.Offset) * t,
+        a.Y.Scale + (b.Y.Scale - a.Y.Scale) * t, a.Y.Offset + (b.Y.Offset - a.Y.Offset) * t)
+    end
+  end
+end
+UD.__add = function(a, b) return UDim2.new(a.X.Scale + b.X.Scale, a.X.Offset + b.X.Offset, a.Y.Scale + b.Y.Scale, a.Y.Offset + b.Y.Offset) end
+UD.__sub = function(a, b) return UDim2.new(a.X.Scale - b.X.Scale, a.X.Offset - b.X.Offset, a.Y.Scale - b.Y.Scale, a.Y.Offset - b.Y.Offset) end
+UD.__eq = function(a, b)
+  return getmt(b) == UD and a.X.Scale == b.X.Scale and a.X.Offset == b.X.Offset and a.Y.Scale == b.Y.Scale and a.Y.Offset == b.Y.Offset
+end
+UD.__tostring = function(u) return string.format("{%g, %g}, {%g, %g}", u.X.Scale, u.X.Offset, u.Y.Scale, u.Y.Offset) end
+
 local function typeof(v)
   local mt = getmt(v)
   if mt == V3 then return "Vector3" end
   if mt == C3 then return "Color3" end
+  if mt == V2 then return "Vector2" end
+  if mt == UD then return "UDim2" end
   if type(v) == "table" and rawget(v, "__id") then return "Instance" end
   return type(v)
 end
 
 -- ---------------------------------------------------------------------------------------------
 -- Host value encoding (see src/engine/runtime.js for the JS side)
---   z nil | b0 b1 | n<number> | s<text> | v x,y,z | c r,g,b | i<instance id> | L<items joined by SEP>
+--   z nil | b0 b1 | n<number> | s<text> | v x,y,z | c r,g,b | w x,y (Vector2) | u xs,xo,ys,yo (UDim2) | i<instance id> | L<items joined by SEP>
 -- ---------------------------------------------------------------------------------------------
 
 local proxies = setmetatable({}, { __mode = "v" })
@@ -98,6 +148,8 @@ local function encode(v)
     local mt = getmt(v)
     if mt == V3 then return string.format("v%.9g,%.9g,%.9g", v.X, v.Y, v.Z) end
     if mt == C3 then return string.format("c%.9g,%.9g,%.9g", v.R, v.G, v.B) end
+    if mt == V2 then return string.format("w%.9g,%.9g", v.X, v.Y) end
+    if mt == UD then return string.format("u%.9g,%.9g,%.9g,%.9g", v.X.Scale, v.X.Offset, v.Y.Scale, v.Y.Offset) end
     local id = rawget(v, "__id")
     if id then return "i" .. id end
   end
@@ -130,6 +182,14 @@ decode = function(s)
   if tag == "c" then
     local r, g, b = body:match("^([^,]+),([^,]+),([^,]+)$")
     return Color3.new(tonumber(r), tonumber(g), tonumber(b))
+  end
+  if tag == "w" then
+    local x, y = body:match("^([^,]+),([^,]+)$")
+    return Vector2.new(tonumber(x), tonumber(y))
+  end
+  if tag == "u" then
+    local a, b, c, d = body:match("^([^,]+),([^,]+),([^,]+),([^,]+)$")
+    return UDim2.new(tonumber(a), tonumber(b), tonumber(c), tonumber(d))
   end
   if tag == "i" then return wrap(tonumber(body)) end
   if tag == "L" then return decodeList(body) end
@@ -273,9 +333,13 @@ local Camera = setmetatable({}, {
 
 local METHODS = {
   Destroy = true, Clone = true, GetChildren = true, GetDescendants = true, FindFirstChild = true,
-  IsA = true, GetFullName = true, ApplyImpulse = true, Play = true, Stop = true,
+  IsA = true, GetFullName = true, ApplyImpulse = true, Play = true, Stop = true, CaptureFocus = true, ReleaseFocus = true,
 }
-local SIGNALS = { Touched = true }
+-- Events an Instance can offer. The engine only starts reporting one once a script connects to it.
+local SIGNALS = {
+  Touched = true, Activated = true, MouseButton1Click = true, MouseButton1Down = true, MouseButton1Up = true,
+  MouseButton2Click = true, MouseEnter = true, MouseLeave = true, FocusLost = true, Focused = true,
+}
 
 local methodCache, instSignals = {}, {}
 
@@ -303,7 +367,16 @@ local function instSignal(id, name)
   return s
 end
 
+-- workspace:Raycast(origin, direction, ignore) -> nil, or { Instance, Position, Normal, Distance }.
+-- direction's length is how far the ray reaches; ignore is an optional Instance the ray passes through.
+local function raycast(self, origin, direction, ignore)
+  local r = method("Raycast")(self, origin, direction, ignore)
+  if r == nil then return nil end
+  return { Instance = r[1], Position = r[2], Normal = r[3], Distance = r[4] }
+end
+
 InstanceMT.__index = function(self, key)
+  if key == "Raycast" then return raycast end
   if METHODS[key] then return method(key) end
   if SIGNALS[key] then return instSignal(rawget(self, "__id"), key) end
   if key == "CurrentCamera" then return Camera end
@@ -326,11 +399,86 @@ end
 
 local down = {}
 local RunService = { Heartbeat = newSignal() }
-local UserInputService = { InputBegan = newSignal(), InputEnded = newSignal() }
+local UserInputService = { InputBegan = newSignal(), InputEnded = newSignal(), InputChanged = newSignal() }
 function UserInputService:IsKeyDown(key) return down[key] == true end
 
+-- TweenService: glides properties of an Instance to goal values over time.
+local EASING = {
+  Linear = { In = function(t) return t end, Out = function(t) return t end, InOut = function(t) return t end },
+  Quad = {
+    In = function(t) return t * t end, Out = function(t) return 1 - (1 - t) * (1 - t) end,
+    InOut = function(t) if t < 0.5 then return 2 * t * t end return 1 - (-2 * t + 2) ^ 2 / 2 end,
+  },
+  Cubic = {
+    In = function(t) return t ^ 3 end, Out = function(t) return 1 - (1 - t) ^ 3 end,
+    InOut = function(t) if t < 0.5 then return 4 * t ^ 3 end return 1 - (-2 * t + 2) ^ 3 / 2 end,
+  },
+  Sine = {
+    In = function(t) return 1 - math.cos(t * math.pi / 2) end, Out = function(t) return math.sin(t * math.pi / 2) end,
+    InOut = function(t) return -(math.cos(math.pi * t) - 1) / 2 end,
+  },
+  Back = {
+    In = function(t) return 2.70158 * t ^ 3 - 1.70158 * t * t end,
+    Out = function(t) return 1 + 2.70158 * (t - 1) ^ 3 + 1.70158 * (t - 1) ^ 2 end,
+    InOut = function(t)
+      local c = 1.70158 * 1.525
+      if t < 0.5 then return ((2 * t) ^ 2 * ((c + 1) * 2 * t - c)) / 2 end
+      return ((2 * t - 2) ^ 2 * ((c + 1) * (t * 2 - 2) + c) + 2) / 2
+    end,
+  },
+}
+
+local function blend(a, b, t)
+  local ty = typeof(a)
+  if ty == "number" then return a + (b - a) * t end
+  if ty == "Color3" then return Color3.new(a.R + (b.R - a.R) * t, a.G + (b.G - a.G) * t, a.B + (b.B - a.B) * t) end
+  if ty == "Vector3" or ty == "Vector2" or ty == "UDim2" then return a:Lerp(b, t) end
+  return t >= 1 and b or a
+end
+
+local TweenInfo = {}
+function TweenInfo.new(time, style, direction)
+  return { Time = time or 1, EasingStyle = style or "Quad", EasingDirection = direction or "Out" }
+end
+
+local TweenService = {}
+function TweenService:Create(inst, info, goals)
+  if typeof(inst) ~= "Instance" then error("TweenService:Create expects an Instance", 2) end
+  info = info or TweenInfo.new()
+  local style = EASING[info.EasingStyle or "Quad"] or EASING.Quad
+  local ease = style[info.EasingDirection or "Out"] or style.Out
+  local tween = { Completed = newSignal(), PlaybackState = "Begin" }
+  local run = 0
+  function tween:Play()
+    run = run + 1
+    local mine = run
+    local from = {}
+    for k in pairs(goals) do from[k] = inst[k] end
+    self.PlaybackState = "Playing"
+    task.spawn(function()
+      local total, t = math.max(info.Time or 1, 0.001), 0
+      while t < total and run == mine do
+        t = t + task.wait()
+        local a = ease(math.min(t / total, 1))
+        for k, goal in pairs(goals) do
+          if not pcall(function() inst[k] = blend(from[k], goal, a) end) then return end -- the Instance was destroyed
+        end
+      end
+      if run == mine then
+        self.PlaybackState = "Completed"
+        self.Completed:Fire("Completed")
+      end
+    end)
+  end
+  function tween:Cancel()
+    run = run + 1
+    self.PlaybackState = "Cancelled"
+  end
+  return tween
+end
+
 local root = decode(call("root", 0))
-local services = { RunService = RunService, UserInputService = UserInputService }
+local services = { RunService = RunService, UserInputService = UserInputService, TweenService = TweenService }
 
 local game = setmetatable({}, {
   __index = function(_, k)
@@ -372,15 +520,23 @@ end
 -- payload is a SEP-joined list of encoded values
 local function event(name, payload)
   local args = decodeList(payload)
-  if name == "touched" then
-    local self, other = args[1], args[2]
+  if name == "signal" then -- an Instance event: args are the Instance, the event name, then the event's own values
+    local self, sig = args[1], args[2]
     local bag = self and instSignals[rawget(self, "__id")]
-    if bag and bag.Touched then bag.Touched:Fire(other) end
+    if bag and bag[sig] then bag[sig]:Fire(args[3], args[4]) end
   elseif name == "input" then
     local began, key, kind = args[1] == "begin", args[2], args[3]
     down[key] = began or nil
     local input = { KeyCode = key, UserInputType = kind }
     if began then UserInputService.InputBegan:Fire(input) else UserInputService.InputEnded:Fire(input) end
+  elseif name == "mouse" then -- mouse movement while the right button is held, and wheel steps
+    local dx, dy, wheel = args[1], args[2], args[3]
+    if dx ~= 0 or dy ~= 0 then
+      UserInputService.InputChanged:Fire({ UserInputType = "MouseMovement", Delta = Vector3.new(dx, dy, 0) })
+    end
+    if wheel ~= 0 then
+      UserInputService.InputChanged:Fire({ UserInputType = "MouseWheel", Delta = Vector3.new(0, 0, wheel) })
+    end
   end
 end
 
@@ -404,7 +560,8 @@ local G = {
   warn = function(...) host("log", 0, "warn", joinArgs(...)) end,
   collectgarbage = function(opt) return opt == "count" and collectgarbage("count") or 0 end,
   typeof = typeof, task = task, game = game, workspace = workspace,
-  Instance = Instance, Vector3 = Vector3, Color3 = Color3,
+  Instance = Instance, Vector3 = Vector3, Color3 = Color3, Vector2 = Vector2, UDim2 = UDim2, TweenInfo = TweenInfo,
+  __wick_self = function(id) return wrap(id) end, -- the host starts each script with: local script = __wick_self(<id>)
 }
 G._G = G
 
