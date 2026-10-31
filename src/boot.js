@@ -1,7 +1,9 @@
-// Wick Engine boot: loads Babylon.js and Havok from core/third_party, starts the WASM core, then hands over to the studio.
-// Both libraries are served from this repo, so the Pages workflow has to copy them into the site (see pages.yml).
+// Wick Engine boot: loads Babylon.js and Havok from core/third_party, starts the WASM core, then hands over to the studio,
+// or to the player when an exported game is deployed (game/game.json). Also registers the service worker, so after the
+// first load everything runs offline. Both libraries are served from this repo (see pages.yml).
 
 import { WickCore } from './engine/core.js';
+import { WickAssets } from './engine/assets.js';
 
 const LIBS = {
   babylon: 'core/third_party/babylon.js',
@@ -46,10 +48,28 @@ async function startHavok() {
   return globalThis.HavokPhysics({ locateFile: (file) => (file.endsWith('.wasm') ? LIBS.havokWasm : file) });
 }
 
+/** game/game.json when a game is deployed next to the engine, otherwise null. */
+async function loadGameConfig() {
+  try {
+    const res = await fetch('game/game.json', { cache: 'no-cache' });
+    if (!res.ok) return null;
+    const config = await res.json();
+    return config?.format === 'wick-game' ? config : null;
+  } catch {
+    return null;
+  }
+}
+
+function registerServiceWorker() {
+  if (!('serviceWorker' in navigator) || !(location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) return;
+  navigator.serviceWorker.register('sw.js').catch((err) => console.warn('Offline support is unavailable:', err));
+}
+
 async function boot() {
   if (typeof WebAssembly !== 'object' || !document.createElement('canvas').getContext('webgl2')) {
     throw new Error('This browser needs WebAssembly and WebGL 2. Please use a current version of Chrome, Edge, Firefox or Safari.');
   }
+  registerServiceWorker();
   splash('Loading Babylon.js and Havok...');
   await Promise.all([loadScript(LIBS.babylon), loadScript(LIBS.havok)]);
   if (!globalThis.BABYLON) throw new Error(`${LIBS.babylon} loaded but defines no BABYLON. It must be the UMD build (babylon.js).`);
@@ -57,9 +77,22 @@ async function boot() {
   const havok = await startHavok();
   splash('Starting the Lua core...');
   const core = await WickCore.load();
+
+  // An exported game boots straight into the player. Adding ?studio opens the editor if the game's game.json allows it.
+  const config = await loadGameConfig();
+  if (config && !(new URLSearchParams(location.search).has('studio') && config.studio)) {
+    splash('Loading the game...');
+    const { startPlayer } = await import('./player.js');
+    await startPlayer({ root, havok, core, config });
+    return;
+  }
+
+  splash('Opening your Library...');
+  const assets = new WickAssets();
+  await assets.open();
   splash('Opening the studio...');
   const { startStudio } = await import('./studio/shell.js');
-  startStudio({ root, havok, core });
+  await startStudio({ root, havok, core, assets });
 }
 
 boot().catch((err) => {
