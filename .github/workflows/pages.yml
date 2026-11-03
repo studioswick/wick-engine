@@ -1,5 +1,7 @@
 # Builds the WASM core and publishes the studio to GitHub Pages.
 # One-time setup: repo Settings > Pages > Build and deployment > Source: GitHub Actions.
+# The repository can stay private: only this built site is public. Games are published from the separate
+# Wick Game Wrapper repository, which downloads this site's files (see files.json).
 name: Deploy Wick Engine
 
 on:
@@ -29,9 +31,12 @@ jobs:
       - name: Assemble site
         run: |
           mkdir -p dist/core/third_party
-          cp -r index.html style src wasm dist/
+          # Everything the app loads at run time. build.sh wrote files.json from the same list.
+          cp -r index.html manifest.json sw.js SKILL.md files.json style src wasm icons dist/
           # Only the two runtime libraries are published, not the Lua sources. Havok* picks up its .wasm too.
           cp core/third_party/babylon.js core/third_party/Havok* dist/core/third_party/
+          # A game folder next to the engine boots the site straight into that game.
+          if [ -d game ]; then cp -r game dist/; fi
           touch dist/.nojekyll
       - uses: actions/upload-pages-artifact@v3
         with:
