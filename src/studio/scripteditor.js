@@ -2,6 +2,7 @@
 // Tab/Enter indentation and a custom right-click menu (the browser's menu is disabled app-wide).
 
 import { h, icon, showMenu } from './ui.js';
+import { attachLua } from './luaview.js';
 
 const COMMIT_DELAY_MS = 700;
 const OPENS_BLOCK = /(\b(then|do|else|repeat)|\bfunction\s*[\w.:]*\s*\([^)]*\))\s*$/;
@@ -83,6 +84,7 @@ export class WickScriptEditor {
     rec.pane = h('div', { class: 'wk-pane wk-editor' }, gutter, area);
     this.tabsEl.append(rec.tab);
     this.panesEl.append(rec.pane);
+    rec.lua = attachLua(area);
     this.open.set(inst.id, rec);
     area.readOnly = this.studio.playing;
   }
@@ -115,6 +117,7 @@ export class WickScriptEditor {
       r.label.textContent = inst.name;
       if (r.area.value !== inst.props.Source) {
         r.area.value = inst.props.Source;
+        r.lua?.update();
         r.area.dispatchEvent(new Event('scroll'));
         r.gutter.dataset.n = '';
         r.gutter.textContent = Array.from({ length: r.area.value.split('\n').length }, (_, i) => i + 1).join('\n');
