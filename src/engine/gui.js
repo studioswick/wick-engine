@@ -34,7 +34,7 @@ export class WickGui {
     this.visible = true;
     this.selection = [];
     this.onSignal = null; // (id, signalName, ...encodedArgs)
-    this.onEditSelect = null; // (inst, additive)
+    this.onEditSelect = null; // (inst, shift, ctrl)
     this.onEditChange = null; // () after a drag or resize finished
     this._imageCache = new Map();
     this._timer = 0;
@@ -71,7 +71,7 @@ export class WickGui {
   }
 
   _pointer(inst, n) {
-    if (!inst || !n.el) return;
+    if (!inst || !n?.el) return; // a script can connect to an object the DOM has not been rebuilt for yet
     const interactive = this.editing || (this.playing && (BUTTONS.has(inst.className) || inst.className === 'TextBox' || inst.className === 'ScrollingFrame'
       || CLICKABLE_SIGNALS.some((s) => this.listened.has(`${inst.id}:${s}`))));
     n.el.style.pointerEvents = interactive ? 'auto' : 'none';
@@ -389,7 +389,7 @@ export class WickGui {
     if (ev.button !== 0) return;
     ev.stopPropagation();
     ev.preventDefault();
-    this.onEditSelect?.(inst, ev.shiftKey);
+    this.onEditSelect?.(inst, ev.shiftKey, ev.ctrlKey || ev.metaKey);
     if (this._layoutOf(inst)) return; // children of a list or grid are placed by the layout
     this._dragStart(ev, [inst], (dx, dy, starts) => {
       for (const s of starts) this.dm.set(s.inst, 'Position', [s.p[0], s.p[1] + dx, s.p[2], s.p[3] + dy]);
