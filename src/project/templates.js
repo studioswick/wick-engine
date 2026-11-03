@@ -21,7 +21,7 @@ for _, coin in ipairs(coins:GetChildren()) do
   local angle = 0
   game:GetService("RunService").Heartbeat:Connect(function(dt)
     angle = (angle + 120 * dt) % 360
-    if coin.Parent then coin.Rotation = Vector3.new(0, angle, 0) end
+    if coin.Parent then coin.Rotation = Vector3.new(90, angle, 0) end
   end)
   coin.Touched:Connect(function()
     if not coin.Parent then return end
@@ -64,7 +64,7 @@ async function playground(dm) {
   dm.set(dm.lighting, 'ClockTime', 15.5);
   const ws = dm.workspace;
   stairs(dm, ws, [18, -10]);
-  dm.create('Part', ws, { Name: 'Ramp', Shape: 'Mesh', MeshId: 'wick://meshes/wedge', Size: [14, 5, 12], Position: [-18, 2.5, 6], Anchored: true, Material: 'Wood', Color: [1, 1, 1], Rotation: [0, 180, 0] });
+  dm.create('Part', ws, { Name: 'Ramp', Shape: 'Mesh', MeshId: 'wick://meshes/wedge', Size: [14, 5, 12], Position: [-18, 2.5, 6], Anchored: true, Material: 'Wood', Color: [1, 1, 1], Rotation: [0, 180, 0], CollisionFidelity: 'Hull' });
   dm.create('Part', ws, { Name: 'Platform', Size: [14, 1, 14], Position: [18, 10.5, 26], Anchored: true, Material: 'Plastic', Texture: 'wick://textures/plates', Color: [1, 1, 1] });
   dm.create('Part', ws, { Name: 'Pillar', Shape: 'Cylinder', Size: [3, 12, 3], Position: [0, 6, 30], Anchored: true, Texture: 'wick://textures/brick', Color: [1, 1, 1] });
   await insertBuiltinBundle(dm, 'crate_pyramid', ws, [-4, 0, 10]);
