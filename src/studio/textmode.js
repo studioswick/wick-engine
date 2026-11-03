@@ -8,6 +8,7 @@
 
 import { h, toast, confirmDialog, promptDialog } from './ui.js';
 import { showSkill } from './dialogs.js';
+import { attachLua } from './luaview.js';
 import { idbGet, idbPut } from '../project/storage.js';
 import { makeZip, readZip } from '../project/zip.js';
 import { TREE_FILE, META_FILE, LOG_FILE, COMMAND_FILE, projectToFiles, filesToProject, parseTree } from '../project/textproject.js';
@@ -69,6 +70,7 @@ export class WickTextMode {
     this.area = h('textarea', { class: 'wk-code', spellcheck: 'false', autocomplete: 'off', wrap: 'off' });
     this.preview = h('div', { class: 'wk-text-preview' });
     this.editor = h('div', { class: 'wk-editor wk-text-editor' }, this.gutter, this.area);
+    this.lua = attachLua(this.area);
     this.panel = h('div', { class: 'wk-text' }, bar,
       h('div', { class: 'wk-text-body' },
         h('div', { class: 'wk-text-side' }, h('div', { class: 'wk-panel-head' }, 'Project files', h('button', { class: 'wk-link', onclick: () => this.newFile() }, '+ New file')), this.list),
@@ -136,6 +138,7 @@ export class WickTextMode {
       if (this.area.value !== f.text || this._shown !== path) this.area.value = f.text;
       this._shown = path;
       this.area.readOnly = isLog;
+      this.lua.setEnabled(path.endsWith('.lua'));
       this._gutter();
     } else {
       this._shown = null;
