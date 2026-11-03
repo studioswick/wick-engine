@@ -60,20 +60,8 @@ async function loadGameConfig() {
   }
 }
 
-function registerServiceWorker() {
-  if (!('serviceWorker' in navigator)) return;
-  const isSecure = location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-  if (!isSecure) return;
-
-  // Resolves 'sw.js' relative to the document root/location, NOT relative to /src/
-  const swUrl = new URL('sw.js', document.baseURI).href;
-
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register(swUrl, { scope: './' })
-      .then((reg) => console.log('Wick SW registered successfully:', reg.scope))
-      .catch((err) => console.warn('Offline support is unavailable:', err));
-  });
-}
+import { WickAssets } from './engine/assets.js';
+import { registerServiceWorker } from './pwa.js';
 
 async function boot() {
   if (typeof WebAssembly !== 'object' || !document.createElement('canvas').getContext('webgl2')) {
