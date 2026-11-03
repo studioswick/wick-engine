@@ -118,7 +118,6 @@ local air, landDip, flight, prevVy = 0, 0, 0, 0
 local leadLeg = 1
 local hipsY = start.Y - rootHalf + standing
 local camAnchorY = start.Y
-local head = Vector3.new(0, 0, 0)
 
 Input.InputChanged:Connect(function(input)
   if input.UserInputType == "MouseMovement" then
@@ -180,8 +179,8 @@ RunService.Heartbeat:Connect(function(dt)
   end
 
   -- ---- stepping up a ledge: lift the capsule over it, because a flat-bottomed cylinder would stop at the riser ----
-  if grounded and stepTimer <= 0 and hit and hit.Normal.Y > 0.95 and current.Magnitude > 2 then
-    local ahead = pos + current.Unit * (rootRadius + 0.45)
+  if grounded and stepTimer <= 0 and hit and hit.Normal.Y > 0.95 and mag > 0 then
+    local ahead = pos + target.Unit * (rootRadius + 0.45)
     local top = workspace:Raycast(Vector3.new(ahead.X, feetY + STEP_HEIGHT + 0.25, ahead.Z), Vector3.new(0, -(STEP_HEIGHT + 0.25), 0), root)
     if top and top.Normal.Y > 0.9 then
       local rise = top.Position.Y - feetY
@@ -217,7 +216,7 @@ RunService.Heartbeat:Connect(function(dt)
   local bodyFwd, bodyRight, bodyUp = Vector3.new(sinY, 0, cosY), Vector3.new(cosY, 0, -sinY), UP
   local baseX, baseZ = pos.X, pos.Z
 
-  -- Where each foot goes, and the highest the hips may be for the planted ones to still reach the ground.
+  -- Where each foot goes, and the highest the hips may be for both legs to still reach their feet.
   local feet, limitY, stanceCount = {}, math.huge, 0
   for i = 1, 2 do
     local sign = i == 1 and -1 or 1
@@ -230,21 +229,21 @@ RunService.Heartbeat:Connect(function(dt)
     local c, s = math.cos(rad(pitch)), math.sin(rad(pitch))
     local ankleY = gy + footH * c + footLen * 0.5 * math.abs(s) + ankleBack * s
     feet[i] = { x = fx, z = fz, gy = gy, pitch = pitch, ankleY = ankleY + rise }
-    if planted then
-      stanceCount = stanceCount + 1
-      local hx, hz = baseX + bodyRight.X * sign * hipSpread, baseZ + bodyRight.Z * sign * hipSpread
-      local dh = math.sqrt((fx - hx) ^ 2 + (fz - hz) ^ 2)
-      limitY = math.min(limitY, ankleY + math.sqrt(math.max(maxReach * maxReach - dh * dh, 0.04)))
-    end
+    if planted then stanceCount = stanceCount + 1 end
+    -- A lifted foot is higher, so it only limits the hips as it comes down: the dip eases in before each footfall.
+    local hx, hz = baseX + bodyRight.X * sign * hipSpread, baseZ + bodyRight.Z * sign * hipSpread
+    local dh = math.sqrt((fx - hx) ^ 2 + (fz - hz) ^ 2)
+    limitY = math.min(limitY, ankleY + rise + math.sqrt(math.max(maxReach * maxReach - dh * dh, 0.04)))
   end
 
   -- ---- pelvis height ----
   flight = approach(flight, (stanceCount == 0 and moving > 0.5) and 1 or 0, dt * 10)
   local groundMean = (feet[1].gy + feet[2].gy) / 2
   local relaxed = groundMean + standing * (1 - 0.08 * rf) - crouch * legLen * 0.3 - landDip * legLen * 0.28 + flight * rf * 0.22
-  local onGround = math.min(relaxed, limitY)
+  local k = 0.12                                                    -- a soft minimum, so the dip eases in and out
+  local onGround = -k * math.log(math.exp(-relaxed / k) + math.exp(-math.min(limitY, relaxed + 2) / k))
   local hipsTarget = onGround + (feetY + standing * 0.9 - onGround) * air
-  if hipsTarget < hipsY then hipsY = hipsTarget else hipsY = hipsY + (hipsTarget - hipsY) * smoothing(18, dt) end
+  hipsY = hipsY + (hipsTarget - hipsY) * smoothing(hipsTarget < hipsY and 30 or 14, dt)
   local base = Vector3.new(baseX, hipsY, baseZ)
   local breathe = math.sin(os.clock() * 1.6) * 0.6 * (1 - moving)
 
@@ -272,7 +271,6 @@ RunService.Heartbeat:Connect(function(dt)
   local headUp = rot(UP, headPitch, headYaw, 0)
   P.Head.Position = joint + headUp * (headH / 2 - 0.05)
   P.Head.Rotation = Vector3.new(headPitch, headYaw, 0)
-  head = P.Head.Position
 
   -- ---- legs: planted feet, or a tucked pose in the air ----
   local rising = clamp(vy / JUMP_SPEED * 1.2, -1, 1)
