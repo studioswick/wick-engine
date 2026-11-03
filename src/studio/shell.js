@@ -11,6 +11,7 @@ import { WickRuntime } from '../engine/runtime.js';
 import { WickGui } from '../engine/gui.js';
 import { WickProject, loadSettings, saveSettings } from '../project/project.js';
 import { showExportDialog } from '../project/exporter.js';
+import { pwa } from '../pwa.js';
 import { WickStudio } from './studio.js';
 import { WickExplorer, insertItems } from './explorer.js';
 import { WickProperties } from './properties.js';
@@ -31,7 +32,7 @@ export async function startStudio({ root, havok, core, assets }) {
 
   // ---------------------------------------------------------------- layout
   const canvas = h('canvas', { class: 'wk-canvas', tabindex: '0' });
-  const playBadge = h('div', { class: 'wk-play-badge' }, 'PLAYING  ·  right mouse drag to look  ·  W A S D Q E to fly');
+  const playBadge = h('div', { class: 'wk-play-badge' }, 'PLAYING  路  right mouse drag to look  路  W A S D Q E to fly');
   const snapLabel = h('span', { class: 'wk-snap-label' });
   const snapInput = h('input', { class: 'wk-input wk-num', type: 'number', min: 0, step: 'any', onkeydown: (e) => { e.stopPropagation(); if (e.key === 'Enter') e.target.blur(); } });
   const snapUnit = h('span', { class: 'wk-muted' });
@@ -129,7 +130,7 @@ export async function startStudio({ root, havok, core, assets }) {
   const editor = new WickScriptEditor(studio, { tabsEl, panesEl, viewportPane });
   const project = new WickProject(studio, { onStatus: status, onTitle: (n) => { titleBtn.textContent = n; document.title = `${n} | Wick Engine`; } });
 
-  world.onPick = (inst, additive) => studio.pick(inst, additive);
+  world.onPick = (inst, shift, ctrl) => studio.pick(inst, shift, ctrl);
   world.onTransformCommit = () => studio.commit();
   world.onContextRequest = (inst, x, y) => explorer.menu(inst, x, y);
   world.onMouseButton = (button, down) => runtime.onMouse(button, down);
@@ -138,7 +139,7 @@ export async function startStudio({ root, havok, core, assets }) {
     log('error', 'The graphics context was lost (usually a GPU reset).');
     if (runtime.playing) runtime.stop('The graphics context was lost, so the game was stopped.');
   };
-  gui.onEditSelect = (inst, additive) => studio.select(inst, additive);
+  gui.onEditSelect = (inst, shift, ctrl) => studio.clickSelect(inst, shift, ctrl);
   gui.onEditChange = () => studio.commit();
   guard.onDegrade = (tier) => { log('warn', `Wick Guard lowered graphics quality to ${tier} to keep the game smooth.`); toast(`Graphics quality lowered to ${tier}`, 'warn'); refreshStats(); };
   guard.onStop = (message) => {
@@ -166,7 +167,7 @@ export async function startStudio({ root, havok, core, assets }) {
     pauseIcon.replaceChildren(icon(paused ? 'play' : 'pause'));
     pauseLabel.textContent = paused ? 'Resume' : 'Pause';
     pauseBtn.title = paused ? 'Resume the game' : 'Pause the game';
-    playBadge.textContent = paused ? 'PAUSED  ·  press Resume to continue  ·  the camera still flies' : 'PLAYING  ·  right mouse drag to look  ·  W A S D Q E to fly';
+    playBadge.textContent = paused ? 'PAUSED  路  press Resume to continue  路  the camera still flies' : 'PLAYING  路  right mouse drag to look  路  W A S D Q E to fly';
     if (runtime.playing) status(paused ? 'Paused' : 'Playing');
   };
   studio.on('dirty', () => status('Unsaved changes'));
@@ -206,6 +207,21 @@ export async function startStudio({ root, havok, core, assets }) {
   function togglePause() {
     if (runtime.paused) runtime.resume(); else runtime.pause();
   }
+
+  // ---- install as an app ----
+  async function installApp() {
+    const outcome = await pwa.install();
+    if (outcome === 'unavailable') modal({ title: 'Install Wick Engine', content: h('p', {}, pwa.hint()), width: 460 });
+    else if (outcome === 'accepted') toast('Wick Engine is being installed');
+  }
+  let offeredInstall = false;
+  const offerInstall = () => {
+    if (!pwa.canPrompt || offeredInstall) return;
+    offeredInstall = true;
+    setTimeout(() => toast('Wick Engine can be installed as an app: File > Install as App.'), 4500);
+  };
+  pwa.onChange(offerInstall);
+  offerInstall();
 
   // A hidden tab stops rendering frames, and the first frame back would look like a freeze. Pause the game while the
   // tab is hidden, resume only if the pause was automatic, and re-arm WickGuard either way.
@@ -256,6 +272,7 @@ export async function startStudio({ root, havok, core, assets }) {
     { label: 'Save to File...', shortcut: 'Ctrl+S', action: () => project.saveToFile() },
     { separator: true },
     { label: 'Export Game...', action: () => showExportDialog(studio) },
+    { label: 'Install as App...', disabled: pwa.installed, action: () => installApp() },
     { separator: true },
     { label: 'Rename Project...', action: () => project.rename() },
   ];
@@ -397,7 +414,7 @@ export async function startStudio({ root, havok, core, assets }) {
     statFps.textContent = `${Math.round(world.fps)} FPS`;
     statParts.textContent = `${dm.partCount} parts`;
     statLua.textContent = runtime.playing ? `Lua ${(runtime.heapBytes / 1048576).toFixed(1)} MB` : '';
-    statQuality.textContent = `${quality() === 'auto' ? 'Auto' : 'Locked'} · ${TIERS[world.tier].name}`;
+    statQuality.textContent = `${quality() === 'auto' ? 'Auto' : 'Locked'} 路 ${TIERS[world.tier].name}`;
     playBtn.disabled = runtime.playing;
     pauseBtn.disabled = !runtime.playing;
     stopBtn.disabled = !runtime.playing;
