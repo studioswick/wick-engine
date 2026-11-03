@@ -7,6 +7,7 @@ import { WickMaterials } from './materials.js';
 import { WickReflections } from './reflections.js';
 import { WickSky } from './sky.js';
 import { WickGrass } from './grass.js';
+import { WickGodRays } from './godrays.js';
 import { builtinMesh, builtinMeshName } from './library.js';
 import { assetIdOf } from './assets.js';
 
@@ -15,14 +16,33 @@ const B = globalThis.BABYLON;
 const DEG = Math.PI / 180;
 
 /**
+ * meshio.js lists every triangle so that (b - a) x (c - a) points out of the solid. Babylon decides which side of a
+ * triangle is its front from the winding, so ask Babylon itself which way round it wants it.
+ */
+const FLIP_WINDING = (() => {
+  try {
+    const normals = [];
+    B.VertexData.ComputeNormals([0, 0, 0, 1, 0, 0, 0, 1, 0], [0, 1, 2], normals);
+    return normals[2] < 0;
+  } catch {
+    return false;
+  }
+})();
+const flipWinding = (indices) => {
+  const out = Uint32Array.from(indices);
+  for (let i = 0; i + 2 < out.length; i += 3) { const t = out[i + 1]; out[i + 1] = out[i + 2]; out[i + 2] = t; }
+  return out;
+};
+
+/**
  * Graphics quality tiers. probes is how many Parts can have their own live reflection (0 turns reflections off),
  * probeSize and skySize are cube-map face sizes, every is how many frames pass between probe refreshes,
  * aniso is texture filtering and bump toggles normal maps. clouds: 3 full volumetric, 2 lite volumetric, 1 skybox
- * imitation. grass: blade settings, or null for none.
+ * imitation. grass: blade settings, or null for none. godrays: { samples, depthScale } of the light shafts, absent for none.
  */
 export const TIERS = [
-  { name: 'High', dprCap: 2, msaa: 4, bloom: true, fxaa: false, shadows: 2048, probes: 5, probeSize: 256, skySize: 256, every: 1, aniso: 8, bump: true, clouds: 3, grass: { radius: 48, density: 5, segments: 3, height: 1 } },
-  { name: 'Medium', dprCap: 1.5, msaa: 2, bloom: true, fxaa: false, shadows: 1024, probes: 2, probeSize: 128, skySize: 128, every: 2, aniso: 4, bump: true, clouds: 2, grass: { radius: 28, density: 2, segments: 1, height: 0.8 } },
+  { name: 'High', dprCap: 2, msaa: 4, bloom: true, fxaa: false, shadows: 2048, probes: 5, probeSize: 256, skySize: 256, every: 1, aniso: 8, bump: true, clouds: 3, grass: { radius: 48, density: 5, segments: 3, height: 1 }, godrays: { samples: 48, depthScale: 0.5 } },
+  { name: 'Medium', dprCap: 1.5, msaa: 2, bloom: true, fxaa: false, shadows: 1024, probes: 2, probeSize: 128, skySize: 128, every: 2, aniso: 4, bump: true, clouds: 2, grass: { radius: 28, density: 2, segments: 1, height: 0.8 }, godrays: { samples: 24, depthScale: 0.35 } },
   { name: 'Low', dprCap: 1, msaa: 0, bloom: false, fxaa: true, shadows: 1024, probes: 0, probeSize: 0, skySize: 0, every: 1, aniso: 1, bump: false, clouds: 1, grass: null },
   { name: 'Minimal', dprCap: 0.7, msaa: 0, bloom: false, fxaa: false, shadows: 0, probes: 0, probeSize: 0, skySize: 0, every: 1, aniso: 1, bump: false, clouds: 1, grass: null },
 ];
@@ -57,7 +77,7 @@ export class WickWorld {
 
     // Callbacks set by the Studio and the runtime.
     this.hooks = {}; // created(inst, mesh) changed(inst, prop, mesh) willDispose(inst)
-    this.onPick = null; // (inst | null, additive)
+    this.onPick = null; // (inst | null, shift, ctrl)
     this.onContextRequest = null; // (inst | null, clientX, clientY)
     this.onTransformCommit = null; // ()
     this.onFrame = null; // (frameMs)
@@ -88,6 +108,7 @@ export class WickWorld {
     this.sky = new WickSky(this);
     this.skyMesh = this.sky.mesh;
     this.grass = new WickGrass(this);
+    this.godrays = new WickGodRays(this);
     this._initSelection();
     this._bindDataModel();
     this._bindPointer();
@@ -104,6 +125,7 @@ export class WickWorld {
       this._updateCameraIcon();
       this.sky.update(dt, this.playing && !this.paused);
       this.grass.update();
+      this.godrays.update();
       this.reflections.update();
     });
     new ResizeObserver(() => this.engine.resize()).observe(canvas.parentElement);
@@ -152,6 +174,7 @@ export class WickWorld {
     this._applyShadows(t.shadows);
     this.sky.setTier(t);
     this.grass.setTier(t.grass);
+    this.godrays.setTier(t.godrays);
 
     // Reflection textures first, then the materials that read them.
     this.reflections.setTier(t);
@@ -165,8 +188,8 @@ export class WickWorld {
 
   _createPipeline() {
     const p = new B.DefaultRenderingPipeline('wick-fx', true, this.scene, [this.camera]);
-    p.bloomThreshold = 0.8;
-    p.bloomWeight = 0.4;
+    p.bloomThreshold = 0.9;
+    p.bloomWeight = 0.3;
     p.bloomKernel = 48;
     p.bloomScale = 0.5;
     p.imageProcessingEnabled = false; // materials tone-map themselves (see the constructor)
@@ -326,7 +349,7 @@ export class WickWorld {
         c.setPointerCapture(e.pointerId);
         e.preventDefault();
       } else if (e.button === 0 && !this.playing && !this.gizmos.isHovered) {
-        this.onPick?.(this._pick(e), e.shiftKey);
+        this.onPick?.(this._pick(e), e.shiftKey, e.ctrlKey || e.metaKey);
       }
       this.onMouseButton?.(MOUSE_NAMES[e.button], true);
     });
@@ -610,7 +633,7 @@ export class WickWorld {
       const vd = new B.VertexData();
       vd.positions = geo.positions;
       vd.normals = geo.normals;
-      vd.indices = geo.indices;
+      vd.indices = FLIP_WINDING ? flipWinding(geo.indices) : geo.indices;
       if (geo.uvs) vd.uvs = geo.uvs;
       vd.applyToMesh(m);
     } else if (inst.props.Shape === 'Ball') m = B.MeshBuilder.CreateSphere(name, { diameter: 1, segments: 24 }, this.scene);
