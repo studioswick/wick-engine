@@ -64,8 +64,29 @@ export class WickStudio {
     this.setSelection(this.isSelected(inst) ? this.selection.filter((s) => s !== inst) : [...this.selection, inst]);
   }
 
-  /** A click in the viewport. Shift adds to or removes from the selection; a plain click on empty space clears it. */
-  pick(inst, additive) { this.select(inst, additive); }
+  /** A click in the viewport, with the modifier keys held. */
+  pick(inst, shift = false, ctrl = false) { this.clickSelect(inst, shift, ctrl); }
+
+  /**
+   * Click selection. Plain: only this object. Ctrl (with or without Shift): toggles this object. Shift alone: also
+   * selects every sibling between the primary selection and this object when they share a parent, and toggles like
+   * Ctrl when they do not. A plain click on empty space clears the selection.
+   */
+  clickSelect(inst, shift = false, ctrl = false) {
+    if (!inst) { if (!shift && !ctrl) this.setSelection([]); return; }
+    if (ctrl || !shift) { this.select(inst, ctrl); return; }
+    const range = this.siblingsBetween(this.selected, inst);
+    if (!range) { this.select(inst, true); return; }
+    this.setSelection([...this.selection.filter((s) => s !== inst), ...range.filter((s) => s !== inst && !this.isSelected(s)), inst]);
+  }
+
+  /** The objects from a to b (both included) in their shared parent's order, or null if they differ in parent or are the same object. */
+  siblingsBetween(a, b) {
+    if (!a || !b || a === b || !a.parent || a.parent !== b.parent) return null;
+    const list = a.parent.children;
+    const from = list.indexOf(a), to = list.indexOf(b);
+    return list.slice(Math.min(from, to), Math.max(from, to) + 1);
+  }
 
   /** The selection without anything whose ancestor is also selected. */
   topLevel(list = this.selection) { return list.filter((i) => !list.some((o) => o !== i && this.dm.isAncestor(o, i))); }
