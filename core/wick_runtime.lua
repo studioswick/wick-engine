@@ -333,8 +333,20 @@ local Camera = setmetatable({}, {
 
 local METHODS = {
   Destroy = true, Clone = true, GetChildren = true, GetDescendants = true, FindFirstChild = true,
-  IsA = true, GetFullName = true, ApplyImpulse = true, Play = true, Stop = true, CaptureFocus = true, ReleaseFocus = true,
+  IsA = true, GetFullName = true,
 }
+-- Methods that exist on one class only. On any other class a child with that name (a button called "Play") is returned.
+local CLASS_METHODS = { ApplyImpulse = "Part", Play = "Sound", Stop = "Sound", CaptureFocus = "TextBox", ReleaseFocus = "TextBox" }
+
+local function classOf(self)
+  local class = rawget(self, "__class")
+  if not class then
+    class = decode(call("get", rawget(self, "__id"), "ClassName"))
+    rawset(self, "__class", class)
+  end
+  return class
+end
+
 -- Events an Instance can offer. The engine only starts reporting one once a script connects to it.
 local SIGNALS = {
   Touched = true, Activated = true, MouseButton1Click = true, MouseButton1Down = true, MouseButton1Up = true,
@@ -376,8 +388,10 @@ local function raycast(self, origin, direction, ignore)
 end
 
 InstanceMT.__index = function(self, key)
-  if key == "Raycast" then return raycast end
+  if key == "Raycast" and classOf(self) == "Workspace" then return raycast end
   if METHODS[key] then return method(key) end
+  local owner = CLASS_METHODS[key]
+  if owner and classOf(self) == owner then return method(key) end
   if SIGNALS[key] then return instSignal(rawget(self, "__id"), key) end
   if key == "CurrentCamera" then return Camera end
   return decode(call("get", rawget(self, "__id"), key))
@@ -415,7 +429,7 @@ local EASING = {
   },
   Sine = {
     In = function(t) return 1 - math.cos(t * math.pi / 2) end, Out = function(t) return math.sin(t * math.pi / 2) end,
-    InOut = function(t) return -(math.cos(math.pi * t) - 1) / 2 end,
+    InOut = function(t) -(math.cos(math.pi * t) - 1) / 2 end,
   },
   Back = {
     In = function(t) return 2.70158 * t ^ 3 - 1.70158 * t * t end,
