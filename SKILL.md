@@ -63,7 +63,7 @@ ClassName [Name] [Property=value ...]
   exist. Put their properties on their line: `Lighting ClockTime=18 FogDensity=0.003`.
 - **Name** is optional and is the first thing after the class if it has no `=`. Bare when it is only letters, digits, `_ - .`;
   otherwise in double quotes: `Part "Left Door"`. Without a name the instance is called by its class.
-- **Property=value**, no spaces around `=`. A value with spaces goes in quotes. `\"` and `\\` and `\n` work inside quotes.
+- **Property=value**, no spaces around `=`. A value with spaces goes in quotes. `"` and `\` and `\n` work inside quotes.
 - A line ending in `\` continues on the next line.
 - A line starting with `#` is a comment (use `#` only as the first character of a line; `#ff0000` is a color after `=`).
 - Child lines are indented under their parent line.
@@ -334,24 +334,24 @@ game.Gui.HUD.Score.Text = "Score: " .. score
 ```wtree
 Workspace
   Model Player
-    Part Root Shape=Cylinder Size=1.8,5.8,1.8 Position=0,2.9,0 Transparency=1 CastShadow=false LockRotation=true Friction=0 Bounciness=0
-    Part Hips Size=1.5,0.5,0.9 Anchored=true CanCollide=false Color=#a3a8b8
-    Part Stomach Size=1.4,0.5,0.85 Anchored=true CanCollide=false Color=#a3a8b8
-    Part Chest Size=1.7,0.9,0.95 Anchored=true CanCollide=false Color=#a3a8b8
-    Part Neck Shape=Cylinder Size=0.4,0.35,0.4 Anchored=true CanCollide=false Color=#a3a8b8
-    Part Head Size=1.2,1.2,1.2 Anchored=true CanCollide=false Color=#a3a8b8
-    Part LeftUpperArm Shape=Cylinder Size=0.5,1.1,0.5 Anchored=true CanCollide=false Color=#a3a8b8
-    Part LeftLowerArm Shape=Cylinder Size=0.45,1,0.45 Anchored=true CanCollide=false Color=#a3a8b8
-    Part LeftHand Shape=Ball Size=0.5,0.5,0.5 Anchored=true CanCollide=false Color=#a3a8b8
-    Part LeftUpperLeg Shape=Cylinder Size=0.62,1.2,0.62 Anchored=true CanCollide=false Color=#a3a8b8
-    Part LeftLowerLeg Shape=Cylinder Size=0.55,1.15,0.55 Anchored=true CanCollide=false Color=#a3a8b8
-    Part LeftFoot Size=0.7,0.3,1.1 Anchored=true CanCollide=false Color=#a3a8b8
-    Part RightUpperArm Shape=Cylinder Size=0.5,1.1,0.5 Anchored=true CanCollide=false Color=#a3a8b8
-    Part RightLowerArm Shape=Cylinder Size=0.45,1,0.45 Anchored=true CanCollide=false Color=#a3a8b8
-    Part RightHand Shape=Ball Size=0.5,0.5,0.5 Anchored=true CanCollide=false Color=#a3a8b8
-    Part RightUpperLeg Shape=Cylinder Size=0.62,1.2,0.62 Anchored=true CanCollide=false Color=#a3a8b8
-    Part RightLowerLeg Shape=Cylinder Size=0.55,1.15,0.55 Anchored=true CanCollide=false Color=#a3a8b8
-    Part RightFoot Size=0.7,0.3,1.1 Anchored=true CanCollide=false Color=#a3a8b8
+    Part Root Shape=Cylinder Size=1.6,5.6,1.6 Position=0,2.8,0 Transparency=1 CastShadow=false LockRotation=true Friction=0 Bounciness=0
+    Part Hips Size=1.2,0.4,0.7 Anchored=true CanCollide=false Color=#a3a8b8
+    Part Stomach Size=1.15,0.45,0.65 Anchored=true CanCollide=false Color=#a3a8b8
+    Part Chest Size=1.5,0.85,0.75 Anchored=true CanCollide=false Color=#a3a8b8
+    Part Neck Shape=Cylinder Size=0.3,0.25,0.3 Anchored=true CanCollide=false Color=#a3a8b8
+    Part Head Size=0.8,0.85,0.9 Anchored=true CanCollide=false Color=#a3a8b8
+    Part LeftUpperArm Shape=Cylinder Size=0.4,1.1,0.4 Anchored=true CanCollide=false Color=#a3a8b8
+    Part LeftLowerArm Shape=Cylinder Size=0.34,0.9,0.34 Anchored=true CanCollide=false Color=#a3a8b8
+    Part LeftHand Shape=Ball Size=0.4,0.4,0.4 Anchored=true CanCollide=false Color=#a3a8b8
+    Part LeftUpperLeg Shape=Cylinder Size=0.55,1.4,0.55 Anchored=true CanCollide=false Color=#a3a8b8
+    Part LeftLowerLeg Shape=Cylinder Size=0.45,1.35,0.45 Anchored=true CanCollide=false Color=#a3a8b8
+    Part LeftFoot Size=0.45,0.25,1.0 Anchored=true CanCollide=false Color=#a3a8b8
+    Part RightUpperArm Shape=Cylinder Size=0.4,1.1,0.4 Anchored=true CanCollide=false Color=#a3a8b8
+    Part RightLowerArm Shape=Cylinder Size=0.34,0.9,0.34 Anchored=true CanCollide=false Color=#a3a8b8
+    Part RightHand Shape=Ball Size=0.4,0.4,0.4 Anchored=true CanCollide=false Color=#a3a8b8
+    Part RightUpperLeg Shape=Cylinder Size=0.55,1.4,0.55 Anchored=true CanCollide=false Color=#a3a8b8
+    Part RightLowerLeg Shape=Cylinder Size=0.45,1.35,0.45 Anchored=true CanCollide=false Color=#a3a8b8
+    Part RightFoot Size=0.45,0.25,1.0 Anchored=true CanCollide=false Color=#a3a8b8
     Part CameraRig Size=0.5,0.5,0.5 Position=0,6,0 Transparency=1 Anchored=true CanCollide=false CastShadow=false
       CameraPoint Offset=0,0,-14 FieldOfView=70
     Script PlayerController src=scripts/player_controller.lua
@@ -359,7 +359,7 @@ Workspace
 
   The controller poses the limbs every frame (their initial positions do not matter). Recolor or retexture any limb with
   its own `Color` / `Texture`; the controller never touches those. The Player's feet stand where the Root's collision
-  cylinder stands: place the Root's `Position.Y` at ground height + 2.9.
+  cylinder stands: place the Root's `Position.Y` at ground height + 2.8.
 
 ## 10. Imported assets
 
@@ -381,7 +381,7 @@ A reference to an asset that does not exist is reported as a warning in the log.
 ## 11. Exporting the finished game
 
 The human uses **File > Export Game** in the Studio: it produces `game/game.wick` and `game/game.json` plus instructions
-for publishing from a fork of the engine on GitHub Pages, or a standalone site zip. You do not need to produce these.
+for publishing with the separate Wick Game Wrapper repository on GitHub Pages, or a standalone site zip. You do not need to produce these.
 Do tell the human to export from the Studio once the project loads without errors.
 
 ## 12. Checklist before you say "done"
