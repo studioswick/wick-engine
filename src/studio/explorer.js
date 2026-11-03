@@ -94,7 +94,7 @@ export class WickExplorer {
       h('span', { class: 'wk-row-name' }, inst.name));
 
     row.addEventListener('pointerdown', (e) => {
-      if (e.button === 0 && (e.shiftKey || e.ctrlKey || e.metaKey)) { this.studio.select(inst, true); return; } // add to or remove from the selection
+      if (e.button === 0 && (e.shiftKey || e.ctrlKey || e.metaKey)) { this.studio.clickSelect(inst, e.shiftKey, e.ctrlKey || e.metaKey); return; } // Shift: range of siblings, Ctrl: toggle
       if (e.button === 2 && this.studio.isSelected(inst)) return; // right-clicking inside a selection keeps it
       if (e.button === 0 || e.button === 2) this.studio.select(inst);
     });
