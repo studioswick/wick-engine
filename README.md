@@ -1,7 +1,7 @@
 # Wick Engine
 
 A browser game engine by Wick Studios. Studio-style editor, Babylon.js rendering, Havok physics, Lua 5.5 scripting.
-Pre-alpha, version **p0.3.0** (see Versioning below).
+Pre-alpha, version **p0.4.0** (see Versioning below).
 
 ## How it fits together
 
@@ -102,6 +102,16 @@ Limits (View > WickGuard Limits) all have a hardware-based default and can be ed
 parts per project, physics bodies, script memory, script time without waiting, script time per frame, the frame
 rates that lower graphics and stop the game, and the frozen-frame time. Script limits apply on the next Play.
 
+## New in p0.4.0
+
+- **Script editor**: Lua syntax colors, and underlines: a blue wavy line is a mistake with a known fix (click it to apply the fix), a red
+  wavy line is an error that is explained in plain words, a blue straight line is a plainer way to write something that works.
+- **Player**: human proportions and speeds, planted feet and two-bone IK for legs and arms, ledge step-up, a snappier jump (hold Space for height).
+- **Graphics**: god rays on High and Medium (`src/engine/godrays.js`), clouds no longer over-bloom, built-in meshes (ramps, cones...) face the right way.
+- **Selection**: Shift-click selects every sibling between two objects; Ctrl (or Ctrl+Shift) toggles only the clicked one.
+- **Install as an app**: File > Install as App; the site now publishes `sw.js`, `manifest.json`, icons and `SKILL.md`.
+- **Publishing**: games are published from the separate Wick Game Wrapper repository, so this repository can stay private.
+
 ## New in p0.3.0
 
 - **Editing**: snapping (move 1 stud, rotate 15 degrees, scale 0.5, editable in the box at the bottom right of the viewport),
@@ -123,8 +133,8 @@ rates that lower graphics and stop the game, and the frozen-frame time. Script l
 ## Publishing a game (GitHub Pages)
 
 1. In the Studio: File > Export Game > GitHub kit. It contains `game/game.wick`, `game/game.json` and `HOW-TO-PUBLISH.txt`.
-2. Fork this repository, add the `game/` folder to your fork, and set Settings > Pages > Source to GitHub Actions.
-3. The workflow builds the engine and deploys it. When `game/game.json` exists the site boots straight into your game; set
+2. Create a repository from the separate Wick Game Wrapper template (the `wick-game-wrapper` repository), upload the `game/` folder to it and set Settings > Pages > Source to GitHub Actions. This repository does not have to be public or forkable.
+3. The wrapper's workflow downloads this engine's published site (its address is `engineUrl` in `game/game.json`), adds your game and deploys it. The site boots straight into your game; set
    `"studio": true` in it to allow `?studio` to open the editor. Standalone Site exports package the engine and the game for any
    static host.
 
