@@ -7,10 +7,10 @@ const GREY = [0.62, 0.64, 0.7];
 
 /** The Player's limbs: name, shape and size. Positions are worked out below from these lengths. */
 const LIMBS = {
-  Hips: ['Block', [1.5, 0.5, 0.9]], Stomach: ['Block', [1.4, 0.5, 0.85]], Chest: ['Block', [1.7, 0.9, 0.95]],
-  Neck: ['Cylinder', [0.4, 0.35, 0.4]], Head: ['Block', [1.2, 1.2, 1.2]],
-  UpperArm: ['Cylinder', [0.5, 1.1, 0.5]], LowerArm: ['Cylinder', [0.45, 1.0, 0.45]], Hand: ['Ball', [0.5, 0.5, 0.5]],
-  UpperLeg: ['Cylinder', [0.62, 1.2, 0.62]], LowerLeg: ['Cylinder', [0.55, 1.15, 0.55]], Foot: ['Block', [0.7, 0.3, 1.1]],
+  Hips: ['Block', [1.2, 0.4, 0.7]], Stomach: ['Block', [1.15, 0.45, 0.65]], Chest: ['Block', [1.5, 0.85, 0.75]],
+  Neck: ['Cylinder', [0.3, 0.25, 0.3]], Head: ['Block', [0.8, 0.85, 0.9]],
+  UpperArm: ['Cylinder', [0.4, 1.1, 0.4]], LowerArm: ['Cylinder', [0.34, 0.9, 0.34]], Hand: ['Ball', [0.4, 0.4, 0.4]],
+  UpperLeg: ['Cylinder', [0.55, 1.4, 0.55]], LowerLeg: ['Cylinder', [0.45, 1.35, 0.45]], Foot: ['Block', [0.45, 0.25, 1.0]],
 };
 
 /** Builds the Player model standing on the ground at origin = [x, groundY, z]. */
@@ -23,7 +23,7 @@ async function buildPlayer(dm, parent, origin) {
   });
   const size = (n) => LIMBS[n][1];
   const root = dm.create('Part', model, {
-    Name: 'Root', Shape: 'Cylinder', Size: [1.8, 5.8, 1.8], Position: [ox, gy + 2.9, oz], Transparency: 1, CastShadow: false,
+    Name: 'Root', Shape: 'Cylinder', Size: [1.6, 5.6, 1.6], Position: [ox, gy + 2.8, oz], Transparency: 1, CastShadow: false,
     LockRotation: true, Friction: 0, Bounciness: 0, Density: 1,
   });
 
