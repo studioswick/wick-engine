@@ -16,7 +16,20 @@ export const GRAVITY_SCALE = 3;
 /** Seconds per physics step. Every step is exactly this long, whatever the frame rate. */
 export const PHYSICS_STEP = 1 / 60;
 
-const IMPACT_COOLDOWN_MS = 90; // one sound per pair of parts in this window (a contact reports once per touch point)
+/** Axis-aligned box of a Part\'s mesh in world space, [minX, minY, minZ, maxX, maxY, maxZ]. Part meshes are unit meshes scaled to Size. */
+const ROTATION = new B.Matrix();
+function worldBox(mesh) {
+  mesh.rotationQuaternion.toRotationMatrix(ROTATION);
+  const m = ROTATION.m, s = mesh.scaling, p = mesh.position;
+  const hx = Math.abs(s.x) / 2, hy = Math.abs(s.y) / 2, hz = Math.abs(s.z) / 2;
+  const ex = Math.abs(m[0]) * hx + Math.abs(m[4]) * hy + Math.abs(m[8]) * hz;
+  const ey = Math.abs(m[1]) * hx + Math.abs(m[5]) * hy + Math.abs(m[9]) * hz;
+  const ez = Math.abs(m[2]) * hx + Math.abs(m[6]) * hy + Math.abs(m[10]) * hz;
+  return [p.x - ex, p.y - ey, p.z - ez, p.x + ex, p.y + ey, p.z + ez];
+}
+const overlap = (a, b) => a[0] <= b[3] && a[3] >= b[0] && a[1] <= b[4] && a[4] >= b[1] && a[2] <= b[5] && a[5] >= b[2];
+
+const IMPACT_COOLDOWN_MS = 90;
 
 export class WickPhysics {
   constructor(scene, havok) {
@@ -32,6 +45,7 @@ export class WickPhysics {
     this._impactObs = null;
     this.paused = false;
     this.dynamic = new Set(); // records of bodies that physics moves, with their last two stepped transforms
+        this.ghosts = new Map(); // Parts with CanCollide off: instance id -> { mesh, hits }. They have no body, so overlaps are found by _sense().
     this.stepper = new FixedStepper({ step: PHYSICS_STEP });
     this.onSlow = null; // (seconds) the machine could not keep up and some simulated time was given up
   }
@@ -55,6 +69,7 @@ export class WickPhysics {
     for (const id of [...this.bodies.keys()]) this.remove(id);
     this.listening.clear();
     this.dynamic.clear();
+        this.ghosts.clear();
     if (this.active) {
       this.plugin.onCollisionObservable.remove(this._impactObs);
       this.scene.disablePhysicsEngine();
@@ -92,9 +107,28 @@ export class WickPhysics {
       B.Vector3.LerpToRef(r.p0, r.p1, a, r.mesh.position);
       B.Quaternion.SlerpToRef(r.q0, r.q1, a, r.mesh.rotationQuaternion);
     }
+    this._sense();
   }
 
-  setGravity(g) { this.scene.getPhysicsEngine()?.setGravity(new B.Vector3(0, -g * GRAVITY_SCALE, 0)); }
+/**',
+'   * Touched for Parts with CanCollide off (coins, trigger zones). They have no body, so every frame each one with a',
+'   * listener is tested against every body; a pair fires once when it starts to overlap.',
+'   */
+_sense() {
+    for (const id of this.listening) {
+      const ghost = this.ghosts.get(id);
+      if (!ghost) continue;
+      const box = worldBox(ghost.mesh);
+      for (const [other, rec] of this.bodies) {
+        if (!overlap(box, worldBox(rec.mesh))) { ghost.hits.delete(other); continue; }
+        if (ghost.hits.has(other)) continue;
+        ghost.hits.add(other);
+         this.onTouched?.(id, other);
+         if (this.listening.has(other)) this.onTouched?.(other, id);
+       }
+     }
+   }
+   setGravity(g) {
 
   /** Convex hull of a Mesh part's geometry at its real size. Built from a throwaway mesh so scaling is exact. */
   _hull(mesh, size) {
@@ -132,9 +166,10 @@ export class WickPhysics {
 
   /** Builds (or rebuilds) the body for a Part. Parts with CanCollide off are visual only. */
   add(inst, mesh) {
+    const hits = this.ghosts.get(inst.id)?.hits; // what a ghost already touches is kept, so it does not touch it again
     this.remove(inst.id);
     const p = inst.props;
-    if (!p.CanCollide) return;
+    if (!p.CanCollide) { this.ghosts.set(inst.id, { mesh, hits: hits ?? new Set() }); return; }
     const surface = SURFACES[p.Material] ?? SURFACES.Plastic;
     const { shape, volume } = this._shape(p, mesh);
     const friction = p.Friction * surface.grip;
@@ -167,6 +202,7 @@ export class WickPhysics {
   }
 
   remove(id) {
+    this.ghosts.delete(id);
     const rec = this.bodies.get(id);
     if (!rec) return;
     this.bodies.delete(id);
