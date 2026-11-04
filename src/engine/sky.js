@@ -199,6 +199,7 @@ export class WickSky {
     const e = Math.sin(th);
     this.sunHeight = e;
     const toSun = new B.Vector3(-Math.cos(th), e, -0.35).normalize();
+    this.sunDir = toSun;
     const toMoon = new B.Vector3(Math.cos(th) * 0.95, -e, 0.3).normalize();
     const dayAmt = smooth(-0.02, 0.3, e), nightAmt = smooth(0.02, 0.3, -e);
     const cloudy = L.CloudsEnabled ? 1 - 0.22 * L.CloudCoverage * L.CloudDensity : 1;
