@@ -4,6 +4,7 @@
 
 import { WickCore } from './engine/core.js';
 import { WickAssets } from './engine/assets.js';
+import { registerServiceWorker } from './pwa.js';
 
 const LIBS = {
   babylon: 'core/third_party/babylon.js',
@@ -59,9 +60,6 @@ async function loadGameConfig() {
     return null;
   }
 }
-
-import { WickAssets } from './engine/assets.js';
-import { registerServiceWorker } from './pwa.js';
 
 async function boot() {
   if (typeof WebAssembly !== 'object' || !document.createElement('canvas').getContext('webgl2')) {
