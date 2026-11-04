@@ -429,7 +429,7 @@ local EASING = {
   },
   Sine = {
     In = function(t) return 1 - math.cos(t * math.pi / 2) end, Out = function(t) return math.sin(t * math.pi / 2) end,
-    InOut = function(t) -(math.cos(math.pi * t) - 1) / 2 end,
+    InOut = function(t) return -(math.cos(math.pi * t) - 1) / 2 end,
   },
   Back = {
     In = function(t) return 2.70158 * t ^ 3 - 1.70158 * t * t end,
