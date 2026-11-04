@@ -110,11 +110,11 @@ export class WickPhysics {
     this._sense();
   }
 
-/**',
-'   * Touched for Parts with CanCollide off (coins, trigger zones). They have no body, so every frame each one with a',
-'   * listener is tested against every body; a pair fires once when it starts to overlap.',
-'   */
-_sense() {
+  /**
+   * Touched for Parts with CanCollide off (coins, trigger zones). They have no body, so every frame each one with a
+   * listener is tested against every body; a pair fires once when it starts to overlap.
+   */
+  _sense() {
     for (const id of this.listening) {
       const ghost = this.ghosts.get(id);
       if (!ghost) continue;
@@ -123,12 +123,15 @@ _sense() {
         if (!overlap(box, worldBox(rec.mesh))) { ghost.hits.delete(other); continue; }
         if (ghost.hits.has(other)) continue;
         ghost.hits.add(other);
-         this.onTouched?.(id, other);
-         if (this.listening.has(other)) this.onTouched?.(other, id);
-       }
-     }
-   }
-   setGravity(g) {
+        this.onTouched?.(id, other);
+        if (this.listening.has(other)) this.onTouched?.(other, id);
+      }
+    }
+  }
+
+  setGravity(g) {
+    this.scene.getPhysicsEngine()?.setGravity(new B.Vector3(0, -g * GRAVITY_SCALE, 0));
+  }
 
   /** Convex hull of a Mesh part's geometry at its real size. Built from a throwaway mesh so scaling is exact. */
   _hull(mesh, size) {
