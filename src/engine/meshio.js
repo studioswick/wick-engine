@@ -350,7 +350,7 @@ const finish = (m) => ({ positions: new Float32Array(m.positions), normals: new 
 function ring(segments, y, r, out) { for (let i = 0; i < segments; i++) { const a = (i / segments) * Math.PI * 2; out.push(Math.cos(a) * r, y, Math.sin(a) * r); } }
 
 const BUILTIN_MESHES = {
-  // Ramp: a right-angled triangular prism sloping up toward -X.
+  // Ramp: a right-angled triangular prism rising toward +X. The tall edge and the vertical face are on the +X side.
   wedge() {
     const p = [-0.5, -0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, -0.5, -0.5, -0.5, 0.5, 0.5, -0.5, 0.5, 0.5, 0.5, 0.5];
     return finish(build(p, [0, 2, 1, 3, 4, 5, 0, 1, 4, 0, 4, 3, 1, 2, 5, 1, 5, 4, 0, 3, 5, 0, 5, 2], false));
@@ -379,6 +379,22 @@ const BUILTIN_MESHES = {
     for (let i = 0; i < major; i++) for (let j = 0; j < minor; j++) {
       const a = i * minor + j, b = ((i + 1) % major) * minor + j, c = ((i + 1) % major) * minor + (j + 1) % minor, d = i * minor + (j + 1) % minor;
       idx.push(a, d, b, b, d, c);
+    }
+    return finish(build(p, idx, true));
+  },
+  // UV sphere filling the unit box. Size.x, Size.y and Size.z stretch it into an ellipsoid; CollisionFidelity=Hull gives it a matching collider.
+  sphere() {
+    const rings = 16, segments = 32, p = [], idx = [];
+    for (let r = 0; r <= rings; r++) {
+      const v = (r / rings) * Math.PI;
+      for (let s = 0; s < segments; s++) {
+        const u = (s / segments) * Math.PI * 2;
+        p.push(0.5 * Math.sin(v) * Math.cos(u), 0.5 * Math.cos(v), 0.5 * Math.sin(v) * Math.sin(u));
+      }
+    }
+    for (let r = 0; r < rings; r++) for (let s = 0; s < segments; s++) {
+      const a = r * segments + s, b = r * segments + ((s + 1) % segments), c = (r + 1) * segments + s, d = (r + 1) * segments + ((s + 1) % segments);
+      idx.push(a, b, c, b, d, c);
     }
     return finish(build(p, idx, true));
   },
