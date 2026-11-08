@@ -316,11 +316,6 @@ export class WickRuntime {
     else throw new Error(`${prop} is not a valid member of UserInputService`);
     return '';
   }
-      }
-    } catch (err) {
-      return `!${clean(err.message || err)}`;
-    }
-  }
 
   _logFromLua(level, text) {
     const w = this._logWindow;
