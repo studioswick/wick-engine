@@ -415,6 +415,15 @@ local down = {}
 local RunService = { Heartbeat = newSignal() }
 local UserInputService = { InputBegan = newSignal(), InputEnded = newSignal(), InputChanged = newSignal() }
 function UserInputService:IsKeyDown(key) return down[key] == true end
+local inputState = { MouseBehavior = "Default", MouseIconEnabled = true }
+setmetatable(UserInputService, {
+  __index = function(_, k) return inputState[k] end,
+  __newindex = function(_, k, v)
+    if inputState[k] == nil then error(k .. " is not a valid member of UserInputService", 2) end
+    call("input", 0, k, tostring(v))
+    inputState[k] = v
+  end,
+})
 
 -- TweenService: glides properties of an Instance to goal values over time.
 local EASING = {
