@@ -158,6 +158,7 @@ export class WickAudio {
       const sound = await B.CreateSoundAsync(`wick-${inst.id}`, this._resolve(p.SoundId), {
         loop: p.Looped,
         volume: p.Volume,
+        playbackRate: p.PlaybackSpeed,
         spatialEnabled: spatial,
         ...(spatial ? this._spatial(p) : {}),
       });
@@ -179,12 +180,13 @@ export class WickAudio {
     this.sounds.delete(id);
   }
 
-  /** Applies Volume, Looped and MaxDistance changes made by a script to a live Sound. */
+  /** Applies Volume, PlaybackSpeed, Looped and MaxDistance changes made by a script to a live Sound. */
   update(inst) {
     const s = this.sounds.get(inst.id);
     if (!s) return;
     const p = inst.props;
     s.volume = p.Volume;
+    s.playbackRate = p.PlaybackSpeed;
     s.loop = p.Looped;
     if (s.spatial) s.spatial.rolloffFactor = falloff(p.MaxDistance).rolloff;
   }
