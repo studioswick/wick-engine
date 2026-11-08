@@ -70,10 +70,11 @@ export class WickGui {
     this._drawSelection();
   }
 
+  /** While playing, an object takes mouse input when it is a button or text box, is Active, or a script listens to it. */
   _pointer(inst, n) {
     if (!inst || !n?.el) return; // a script can connect to an object the DOM has not been rebuilt for yet
     const interactive = this.editing || (this.playing && (BUTTONS.has(inst.className) || inst.className === 'TextBox' || inst.className === 'ScrollingFrame'
-      || CLICKABLE_SIGNALS.some((s) => this.listened.has(`${inst.id}:${s}`))));
+      || inst.props.Active || CLICKABLE_SIGNALS.some((s) => this.listened.has(`${inst.id}:${s}`))));
     n.el.style.pointerEvents = interactive ? 'auto' : 'none';
   }
 
