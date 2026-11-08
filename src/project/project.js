@@ -51,6 +51,7 @@ export class WickProject {
         localStorage.removeItem(LEGACY_AUTOSAVE_KEY);
         await this._autosaveNow();
         this.onStatus('Restored your last project');
+        this._reportMigration();
         return true;
       } catch { /* fall through to the demo */ }
     }
@@ -58,6 +59,18 @@ export class WickProject {
     this.studio.resetHistory();
     await this._autosaveNow();
     return false;
+  }
+
+  /** Says so when a project from another engine version was loaded, so the user knows what happened to it. */
+  _reportMigration() {
+    const m = this.dm.migration;
+    if (!m) return;
+    if (m.error) this.studio.toast(`This project was saved by ${m.from}. Updating it failed, so it was loaded as it is (${m.error}).`, 'warn');
+    else if (m.newer) this.studio.toast(`This project was saved by a newer Wick Engine (${m.from}). Anything this version does not know is left out.`, 'warn');
+    else if (m.updated) {
+      this.studio.toast(`Updated this project from ${m.from ?? 'an older version'} to ${m.to}`);
+      for (const note of m.notes) this.studio.log('info', `Project update ${note}`);
+    }
   }
 
   _scheduleAutosave() {
@@ -122,6 +135,7 @@ export class WickProject {
       this.studio.resetHistory();
       await this._autosaveNow();
       this.onStatus(`Opened ${file.name}`);
+      this._reportMigration();
     } catch (err) {
       this.studio.toast(err instanceof SyntaxError ? 'That file is not valid JSON.' : err.message, 'error');
     }
