@@ -4,6 +4,7 @@
 import { WICK_SOUNDS, soundId, WICK_TEXTURES, textureId, VOID_TEXTURE, WICK_MESHES, meshId } from './library.js';
 import { WickAssets, assetUri } from './assets.js';
 import { WICK_VERSION } from '../version.js';
+import { migrateProject } from '../project/migrate.js';
 
 /** Hard limits. maxParts is set by WickGuard from the device's performance (see guard.js). */
 export const WICK_LIMITS = { maxParts: 2500, maxSourceChars: 200000 };
@@ -51,6 +52,7 @@ const guiObject = (extra = {}) => ({
   LayoutOrder: num(0, { min: -100000, max: 100000, step: 1, cat: 'Layout' }),
   Visible: bool(true, { cat: 'Layout' }),
   ClipsDescendants: bool(false, { cat: 'Layout' }),
+  Active: bool(false, { cat: 'Behavior' }), // true: the object takes mouse clicks itself, so they never reach the game
   BackgroundColor: col([0.18, 0.2, 0.27], { cat: 'Appearance' }),
   BackgroundTransparency: num(0, { min: 0, max: 1, step: 0.05, cat: 'Appearance' }),
   ...extra,
@@ -146,6 +148,7 @@ export const CLASS_DEFS = {
     props: {
       SoundId: str(soundId('hum'), { cat: 'Sound', suggest: soundSuggest }),
       Volume: num(0.6, { min: 0, max: 2, step: 0.05, cat: 'Sound' }),
+      PlaybackSpeed: num(1, { min: 0.1, max: 4, step: 0.05, cat: 'Sound' }), // 1 is normal speed and pitch
       Looped: bool(false, { cat: 'Sound' }),
       PlayOnStart: bool(false, { cat: 'Sound' }),
       Spatial: bool(true, { cat: 'Sound' }),
@@ -301,6 +304,8 @@ export class WickDataModel {
     this.assets = assets;
     /** Optional hook: (inst, prop) -> live value or undefined. Installed while playing. */
     this.liveRead = null;
+    /** What the last load() did to bring the project up to date: see migrateProject in project/migrate.js. */
+    this.migration = null;
     this.projectName = 'Untitled Project';
     this._initEmpty();
   }
@@ -588,6 +593,8 @@ export class WickDataModel {
       throw new Error('This is not a Wick Engine project file');
     }
     if (data.version > 1) throw new Error('This project was saved by a newer Wick Engine');
+    this.migration = migrateProject(data);
+    data = this.migration.data;
     this._nextId = 1;
     this._byId = new Map();
     this._partCount = 0;
