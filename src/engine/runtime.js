@@ -298,7 +298,15 @@ export class WickRuntime {
           else if (a !== 'Touched' && this.gui?.listen(inst, a)) { /* a UI event */ }
           else throw new Error(`${a} is not a valid event of ${inst.className}`);
           return '';
-        case 'input': return this._inputSetting(a, b);   // in _host's switch
+        }
+        case 'input': return this._inputSetting(a, b);
+        case 'camget': return this._camera(a);
+        default: throw new Error(`unknown host call "${op}"`);
+      }
+    } catch (err) {
+      return `!${clean(err.message || err)}`;
+    }
+  }
 
   _inputSetting(prop, value) {
     if (prop === 'MouseBehavior') {
@@ -308,9 +316,6 @@ export class WickRuntime {
     else throw new Error(`${prop} is not a valid member of UserInputService`);
     return '';
   }
-        }
-        case 'camget': return this._camera(a);
-        default: throw new Error(`unknown host call "${op}"`);
       }
     } catch (err) {
       return `!${clean(err.message || err)}`;
