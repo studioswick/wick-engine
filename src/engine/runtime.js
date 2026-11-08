@@ -282,13 +282,12 @@ export class WickRuntime {
       switch (op) {
         case 'log': return this._logFromLua(a, b);
         case 'root': return `i${this.dm.root.id}`;
-        case 'get': return this._get(this._inst(id), a);
-        case 'set': return this._set(this._inst(id), a, b);
-        case 'new': return this._new(a, b);
         case 'get':
           // A destroyed Instance reads as detached, so `inst.Parent == nil` tells a script it is gone.
           if (a === 'Parent' && !this.dm.find(id)) return 'z';
           return this._get(this._inst(id), a);
+        case 'set': return this._set(this._inst(id), a, b);
+        case 'new': return this._new(a, b);
         case 'call':
           if (a === 'Destroy' && !this.dm.find(id)) return 'z';
           return this._call(this._inst(id), a, b);
