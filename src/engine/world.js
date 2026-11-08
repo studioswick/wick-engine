@@ -806,4 +806,17 @@ export class WickWorld {
 
   get fps() { return this.engine.getFps(); }
   get activeMeshCount() { return this.meshes.size; }
+    // ---- pointer lock: scripts ask for it with UserInputService.MouseBehavior = "LockCenter" ----
+  get pointerLocked() { return document.pointerLockElement === this.canvas; }
+
+  setPointerLock(on) { this._lockWanted = on; this.syncPointerLock(); }
+
+  /** Locked only while a game runs unpaused. The browser grants it from a click, so a refused request is retried on the next canvas click. */
+  syncPointerLock() {
+    const want = this._lockWanted && this.playing && !this.paused;
+    if (want && !this.pointerLocked) this.canvas.requestPointerLock()?.catch?.(() => {});
+    else if (!want && this.pointerLocked) document.exitPointerLock();
+  }
+
+  setCursorVisible(visible) { this.canvas.style.cursor = visible ? '' : 'none'; }
 }
