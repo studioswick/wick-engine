@@ -3,7 +3,7 @@
 // Engine files are served from the cache and refreshed in the background (the update shows on the next load).
 // game/ and files.json try the network first, so a redeployed game is picked up as soon as you are online.
 
-const VERSION = 'p0.4.0';
+const VERSION = 'p0.5.0';
 const CACHE = `wick-${VERSION}`;
 
 self.addEventListener('install', (event) => {
