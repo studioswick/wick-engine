@@ -113,7 +113,7 @@ export class WickWorld {
     this._bindDataModel();
     this._bindPointer();
     this._ready = true;
-    this._applyQuality();
+    this.rebuildAll();
 
     this.engine.onContextLostObservable.add(() => this.onContextLost?.());
     this.scene.onAfterRenderObservable.add(() => this.onFrame?.(this.engine.getDeltaTime()));
