@@ -19,9 +19,11 @@ local coins = workspace.Coins
 _G.coins = 0
 for _, coin in ipairs(coins:GetChildren()) do
   local angle = 0
-  game:GetService("RunService").Heartbeat:Connect(function(dt)
+  local spin
+  spin = game:GetService("RunService").Heartbeat:Connect(function(dt)
+    if not coin.Parent then spin:Disconnect() return end -- the coin was collected
     angle = (angle + 120 * dt) % 360
-    if coin.Parent then coin.Rotation = Vector3.new(90, angle, 0) end
+    coin.Rotation = Vector3.new(90, angle, 0)
   end)
   coin.Touched:Connect(function()
     if not coin.Parent then return end
